@@ -1,9 +1,8 @@
-import "./storage";
 import React, { useState, useEffect, useRef } from "react";
 import {
   Plus, Minus, Trash2, History, X, Banknote, ArrowLeftRight, ArrowLeft,
   Camera, Check, Settings, Package, FolderOpen, QrCode, ChevronRight,
-  TrendingUp, Calendar, Store, ArrowRight, Printer
+  TrendingUp, Calendar, Store, ArrowRight, Printer, Edit2
 } from "lucide-react";
 
 const PALETTE = ["#BFE3F0", "#C9EFCB", "#FCE9B0", "#F3D3C7"];
@@ -211,6 +210,7 @@ export default function BakeryPOS() {
 
   useEffect(() => {
     (async () => {
+      try { await import("./storage"); } catch (e) { /* no storage.js in this environment - keep default window.storage */ }
       const s = await loadKey("bakery-shop", { name: "", image: null, promptpayId: "", setupDone: false });
       const p = await loadKey("bakery-products", []);
       const c = await loadKey("bakery-categories", []);
@@ -285,6 +285,7 @@ export default function BakeryPOS() {
     });
   };
   const deleteProduct = (id) => setProducts((prev) => prev.filter((p) => p.id !== id));
+  const deleteOrder = (id) => setOrders((prev) => prev.filter((o) => o.id !== id));
 
   const saveCategory = (cat, productIds) => {
     setCategories((prev) => {
@@ -346,7 +347,8 @@ export default function BakeryPOS() {
         {showAddProduct && (
           <ProductModal initial={typeof showAddProduct === "object" ? showAddProduct : null}
             categories={categories} onClose={() => setShowAddProduct(false)}
-            onSave={(p) => { saveProduct(p); setShowAddProduct(false); }} />
+            onSave={(p) => { saveProduct(p); setShowAddProduct(false); }}
+            onDelete={typeof showAddProduct === "object" ? () => { deleteProduct(showAddProduct.id); setShowAddProduct(false); } : null} />
         )}
         {showAddCategory && (
           <CategoryModal initial={editingCategory} products={products}
@@ -383,13 +385,16 @@ export default function BakeryPOS() {
             <div className="product-grid">
               {visibleProducts.length === 0 && <div className="empty-note">ยังไม่มีสินค้าในหมวดนี้</div>}
               {visibleProducts.map((p, idx) => (
-                <button className="price-tag-card" key={p.id} onClick={() => selectProduct(p)}>
+                <div className="price-tag-card" key={p.id} onClick={() => selectProduct(p)} role="button" tabIndex={0}>
+                  <button className="tag-edit-btn" onClick={(e) => { e.stopPropagation(); setShowAddProduct(p); }}>
+                    <Edit2 size={13} />
+                  </button>
                   <div className="tag-media" style={{ background: PALETTE[idx % PALETTE.length] }}>
                     {p.image ? <img src={p.image} alt={p.name} /> : <span className="tag-icon">{p.icon || "🍰"}</span>}
                   </div>
                   <div className="tag-name">{p.name}</div>
                   <div className="tag-price">฿{fmt(p.price)}</div>
-                </button>
+                </div>
               ))}
             </div>
           </section>
@@ -504,7 +509,8 @@ export default function BakeryPOS() {
       {showAddProduct && (
         <ProductModal initial={typeof showAddProduct === "object" ? showAddProduct : null}
           categories={categories} onClose={() => setShowAddProduct(false)}
-          onSave={(p) => { saveProduct(p); setShowAddProduct(false); }} />
+          onSave={(p) => { saveProduct(p); setShowAddProduct(false); }}
+          onDelete={typeof showAddProduct === "object" ? () => { deleteProduct(showAddProduct.id); setShowAddProduct(false); } : null} />
       )}
 
       {showToppingPicker && (
@@ -557,23 +563,11 @@ export default function BakeryPOS() {
       )}
 
       {historyDetail && (
-        <div className="modal-backdrop" onClick={() => setHistoryDetail(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-head"><span>รายละเอียดออเดอร์</span>
-              <button className="icon-btn" onClick={() => setHistoryDetail(null)}><X size={18} /></button>
-            </div>
-            <div className="detail-time">{new Date(historyDetail.time).toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" })}</div>
-            {historyDetail.items.map((i) => (
-              <div className="receipt-row" key={i.id}><span>{i.icon || "🍰"} {i.name} x{i.qty}</span><span>฿{fmt(i.price * i.qty)}</span></div>
-            ))}
-            <div className="receipt-divider" />
-            <div className="receipt-row"><span>ยอดรวม</span><span>฿{fmt(historyDetail.subtotal)}</span></div>
-            <div className="receipt-row"><span>ส่วนลด</span><span>฿{fmt(historyDetail.discount)}</span></div>
-            <div className="receipt-row total-row"><span>สุทธิ</span><span>฿{fmt(historyDetail.total)}</span></div>
-            <div className="receipt-row"><span>ชำระโดย</span><span>{historyDetail.paymentMethod === "cash" ? "เงินสด" : "โอนเงิน"}</span></div>
-            <button className="print-btn" onClick={() => window.print()}><Printer size={16} /> พิมพ์ใบเสร็จ</button>
-          </div>
-        </div>
+        <HistoryDetailModal
+          order={historyDetail}
+          onClose={() => setHistoryDetail(null)}
+          onDelete={() => { deleteOrder(historyDetail.id); setHistoryDetail(null); }}
+        />
       )}
 
       <ReceiptPrintable shop={shop} order={paidStamp ? lastOrder : historyDetail} />
@@ -834,7 +828,7 @@ function QRPayBlock({ promptpayId, amount, onGoSetup }) {
   );
 }
 
-function ProductModal({ initial, categories, onClose, onSave }) {
+function ProductModal({ initial, categories, onClose, onSave, onDelete }) {
   const [name, setName] = useState(initial?.name || "");
   const [price, setPrice] = useState(initial?.price || "");
   const [category, setCategory] = useState(initial?.category || "");
@@ -845,6 +839,7 @@ function ProductModal({ initial, categories, onClose, onSave }) {
   const [tName, setTName] = useState("");
   const [tPrice, setTPrice] = useState("");
   const [tIcon, setTIcon] = useState(TOPPING_ICONS[0]);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const addTopping = () => {
     const p = Number(tPrice);
@@ -931,6 +926,19 @@ function ProductModal({ initial, categories, onClose, onSave }) {
         )}
 
         <button className="confirm-btn" onClick={save}>บันทึกสินค้า</button>
+        {onDelete && (
+          confirmDelete ? (
+            <div className="confirm-delete-row">
+              <span>ลบสินค้านี้แน่ใจนะ?</span>
+              <div className="confirm-delete-actions">
+                <button className="wizard-back-btn" onClick={() => setConfirmDelete(false)}>ยกเลิก</button>
+                <button className="delete-btn-confirm" onClick={onDelete}>ยืนยันลบ</button>
+              </div>
+            </div>
+          ) : (
+            <button className="delete-btn" onClick={() => setConfirmDelete(true)}><Trash2 size={14} /> ลบสินค้านี้</button>
+          )
+        )}
       </div>
     </div>
   );
@@ -960,6 +968,41 @@ function ToppingPickerModal({ product, onClose, onConfirm }) {
         </div>
         <div className="topping-total-row"><span>ราคารวม</span><span>฿{fmt(total)}</span></div>
         <button className="confirm-btn" onClick={() => onConfirm(selected)}>เพิ่มลงตะกร้า</button>
+      </div>
+    </div>
+  );
+}
+
+function HistoryDetailModal({ order, onClose, onDelete }) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head"><span>รายละเอียดออเดอร์</span>
+          <button className="icon-btn" onClick={onClose}><X size={18} /></button>
+        </div>
+        <div className="detail-time">{new Date(order.time).toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" })}</div>
+        {order.items.map((i) => (
+          <div className="receipt-row" key={i.id}><span>{i.icon || "🍰"} {i.name} x{i.qty}</span><span>฿{fmt(i.price * i.qty)}</span></div>
+        ))}
+        <div className="receipt-divider" />
+        <div className="receipt-row"><span>ยอดรวม</span><span>฿{fmt(order.subtotal)}</span></div>
+        <div className="receipt-row"><span>ส่วนลด</span><span>฿{fmt(order.discount)}</span></div>
+        <div className="receipt-row total-row"><span>สุทธิ</span><span>฿{fmt(order.total)}</span></div>
+        <div className="receipt-row"><span>ชำระโดย</span><span>{order.paymentMethod === "cash" ? "เงินสด" : "โอนเงิน"}</span></div>
+        <button className="print-btn" onClick={() => window.print()}><Printer size={16} /> พิมพ์ใบเสร็จ</button>
+
+        {confirmDelete ? (
+          <div className="confirm-delete-row">
+            <span>ลบรายการขายนี้แน่ใจนะ? (แก้คืนไม่ได้)</span>
+            <div className="confirm-delete-actions">
+              <button className="wizard-back-btn" onClick={() => setConfirmDelete(false)}>ยกเลิก</button>
+              <button className="delete-btn-confirm" onClick={onDelete}>ยืนยันลบ</button>
+            </div>
+          </div>
+        ) : (
+          <button className="delete-btn" onClick={() => setConfirmDelete(true)}><Trash2 size={14} /> ลบรายการขายนี้</button>
+        )}
       </div>
     </div>
   );
@@ -1146,6 +1189,11 @@ const css = `
 .confirm-btn { width:100%; margin-top:18px; background:var(--yellow-deep); color:var(--ink); border:none; border-radius:999px; padding:13px; font-family:'Prompt'; font-weight:600; font-size:14.5px; cursor:pointer; }
 .confirm-btn:disabled { opacity:0.4; cursor:not-allowed; }
 .delete-btn { width:100%; margin-top:10px; background:none; border:1px solid var(--line); color:var(--peach-deep); border-radius:999px; padding:10px; font-family:'Prompt'; font-size:13.5px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px; }
+.tag-edit-btn { position:absolute; top:8px; right:8px; width:26px; height:26px; border-radius:50%; background:rgba(255,255,255,0.9); border:none; display:flex; align-items:center; justify-content:center; color:var(--ink-soft); box-shadow: var(--shadow); cursor:pointer; z-index:2; }
+.tag-edit-btn:hover { color:var(--yellow-deep); }
+.confirm-delete-row { margin-top:10px; background:#FDEEEE; border-radius:14px; padding:12px; text-align:center; font-family:'Prompt'; font-size:13px; color:#B23B3B; }
+.confirm-delete-actions { display:flex; gap:8px; margin-top:10px; }
+.delete-btn-confirm { flex:1; background:#D64545; color:white; border:none; border-radius:999px; padding:10px; font-family:'Prompt'; font-weight:600; font-size:13.5px; cursor:pointer; }
 
 .pay-modal { max-width:340px; }
 .pay-total { font-family:'Prompt'; font-weight:700; font-size:32px; text-align:center; color:var(--ink); margin-bottom:16px; }
