@@ -1,9 +1,8 @@
-import "./storage";
 import React, { useState, useEffect, useRef } from "react";
 import {
   Plus, Minus, Trash2, History, X, Banknote, ArrowLeftRight, ArrowLeft,
   Camera, Check, Settings, Package, FolderOpen, QrCode, ChevronRight,
-  TrendingUp, Calendar, Store, ArrowRight
+  TrendingUp, Calendar, Store, ArrowRight, Printer
 } from "lucide-react";
 
 const PALETTE = ["#BFE3F0", "#C9EFCB", "#FCE9B0", "#F3D3C7"];
@@ -81,6 +80,7 @@ function buildPromptPayPayload(target, amount) {
 }
 
 const ICON_CHOICES = ["🍰", "🎂", "🍫", "🍓", "🧀", "🍪", "🧈", "🌸", "🥐", "🍞", "🍩", "☕", "🍵", "🍊", "🥧", "🧁"];
+const TOPPING_ICONS = ["🍫", "🍓", "🫐", "🍌", "🍊", "🥥", "🍋", "🍪", "🌰", "🧁", "🎀", "🎁", "🏞️"];
 
 // ================= Image cropper =================
 function ImageCropper({ src, round, onCancel, onConfirm }) {
@@ -206,6 +206,7 @@ export default function BakeryPOS() {
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [showAddCategory, setShowAddCategory] = useState(false);
   const [editingCategory, setEditingCategory] = useState(null);
+  const [showToppingPicker, setShowToppingPicker] = useState(null);
 
   useEffect(() => {
     (async () => {
@@ -230,6 +231,24 @@ export default function BakeryPOS() {
       if (ex) return prev.map((i) => (i.id === p.id ? { ...i, qty: i.qty + 1 } : i));
       return [...prev, { id: p.id, name: p.name, price: p.price, image: p.image, icon: p.icon, qty: 1 }];
     });
+  };
+  const selectProduct = (p) => {
+    if (p.toppings && p.toppings.length > 0) setShowToppingPicker(p);
+    else addToCart(p);
+  };
+  const addToCartWithToppings = (p, selectedToppings) => {
+    const toppingIds = selectedToppings.map((t) => t.id).sort().join("-");
+    const cartId = toppingIds ? `${p.id}__${toppingIds}` : p.id;
+    const extra = selectedToppings.reduce((s, t) => s + t.price, 0);
+    const name = selectedToppings.length
+      ? `${p.name} (+${selectedToppings.map((t) => t.name).join(", ")})`
+      : p.name;
+    setCart((prev) => {
+      const ex = prev.find((i) => i.id === cartId);
+      if (ex) return prev.map((i) => (i.id === cartId ? { ...i, qty: i.qty + 1 } : i));
+      return [...prev, { id: cartId, name, price: p.price + extra, image: p.image, icon: p.icon, qty: 1, toppings: selectedToppings }];
+    });
+    setShowToppingPicker(null);
   };
   const changeQty = (id, d) => setCart((prev) => prev.map((i) => (i.id === id ? { ...i, qty: i.qty + d } : i)).filter((i) => i.qty > 0));
   const removeItem = (id) => setCart((prev) => prev.filter((i) => i.id !== id));
@@ -363,7 +382,7 @@ export default function BakeryPOS() {
             <div className="product-grid">
               {visibleProducts.length === 0 && <div className="empty-note">ยังไม่มีสินค้าในหมวดนี้</div>}
               {visibleProducts.map((p, idx) => (
-                <button className="price-tag-card" key={p.id} onClick={() => addToCart(p)}>
+                <button className="price-tag-card" key={p.id} onClick={() => selectProduct(p)}>
                   <div className="tag-media" style={{ background: PALETTE[idx % PALETTE.length] }}>
                     {p.image ? <img src={p.image} alt={p.name} /> : <span className="tag-icon">{p.icon || "🍰"}</span>}
                   </div>
@@ -487,6 +506,12 @@ export default function BakeryPOS() {
           onSave={(p) => { saveProduct(p); setShowAddProduct(false); }} />
       )}
 
+      {showToppingPicker && (
+        <ToppingPickerModal product={showToppingPicker}
+          onClose={() => setShowToppingPicker(null)}
+          onConfirm={(selected) => addToCartWithToppings(showToppingPicker, selected)} />
+      )}
+
       {showPayModal && (
         <div className="modal-backdrop" onClick={() => !paidStamp && setShowPayModal(false)}>
           <div className="modal pay-modal" onClick={(e) => e.stopPropagation()}>
@@ -522,6 +547,7 @@ export default function BakeryPOS() {
                 <div className="stamp">ชำระเงินสำเร็จ</div>
                 <div className="stamp-order-total">฿{fmt(lastOrder?.total || 0)}</div>
                 {lastOrder?.paymentMethod === "cash" && <div className="stamp-change">เงินทอน ฿{fmt(lastOrder.change)}</div>}
+                <button className="print-btn" onClick={() => window.print()}><Printer size={16} /> พิมพ์ใบเสร็จ</button>
                 <button className="confirm-btn" onClick={closeReceipt}>ออเดอร์ใหม่</button>
               </div>
             )}
@@ -544,14 +570,46 @@ export default function BakeryPOS() {
             <div className="receipt-row"><span>ส่วนลด</span><span>฿{fmt(historyDetail.discount)}</span></div>
             <div className="receipt-row total-row"><span>สุทธิ</span><span>฿{fmt(historyDetail.total)}</span></div>
             <div className="receipt-row"><span>ชำระโดย</span><span>{historyDetail.paymentMethod === "cash" ? "เงินสด" : "โอนเงิน"}</span></div>
+            <button className="print-btn" onClick={() => window.print()}><Printer size={16} /> พิมพ์ใบเสร็จ</button>
           </div>
         </div>
       )}
+
+      <ReceiptPrintable shop={shop} order={paidStamp ? lastOrder : historyDetail} />
     </div>
   );
 }
 
 // ================= sub components =================
+
+function ReceiptPrintable({ shop, order }) {
+  if (!order) return null;
+  return (
+    <div className="print-receipt">
+      <div className="pr-shop">{shop?.name || "ร้านค้า"}</div>
+      <div className="pr-time">{new Date(order.time).toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" })}</div>
+      <div className="pr-divider" />
+      {order.items.map((i) => (
+        <div className="pr-row" key={i.id}>
+          <span>{i.name} x{i.qty}</span>
+          <span>฿{fmt(i.price * i.qty)}</span>
+        </div>
+      ))}
+      <div className="pr-divider" />
+      <div className="pr-row"><span>ยอดรวม</span><span>฿{fmt(order.subtotal)}</span></div>
+      <div className="pr-row"><span>ส่วนลด</span><span>฿{fmt(order.discount)}</span></div>
+      <div className="pr-row pr-total"><span>สุทธิ</span><span>฿{fmt(order.total)}</span></div>
+      <div className="pr-row"><span>ชำระโดย</span><span>{order.paymentMethod === "cash" ? "เงินสด" : "โอนเงิน"}</span></div>
+      {order.paymentMethod === "cash" && (
+        <>
+          <div className="pr-row"><span>รับเงิน</span><span>฿{fmt(order.cash)}</span></div>
+          <div className="pr-row"><span>เงินทอน</span><span>฿{fmt(order.change)}</span></div>
+        </>
+      )}
+      <div className="pr-thanks">ขอบคุณที่อุดหนุนค่ะ</div>
+    </div>
+  );
+}
 
 function WizardHeader({ shop, step, setStep, onClose }) {
   const steps = [
@@ -781,11 +839,24 @@ function ProductModal({ initial, categories, onClose, onSave }) {
   const [category, setCategory] = useState(initial?.category || "");
   const [icon, setIcon] = useState(initial?.icon || "🍰");
   const [image, setImage] = useState(initial?.image || null);
+  const [toppings, setToppings] = useState(initial?.toppings || []);
+  const [showToppingForm, setShowToppingForm] = useState(false);
+  const [tName, setTName] = useState("");
+  const [tPrice, setTPrice] = useState("");
+  const [tIcon, setTIcon] = useState(TOPPING_ICONS[0]);
+
+  const addTopping = () => {
+    const p = Number(tPrice);
+    if (!tName.trim() || !p || p <= 0) return;
+    setToppings((prev) => [...prev, { id: uid("top"), name: tName.trim(), price: p, icon: tIcon }]);
+    setTName(""); setTPrice(""); setTIcon(TOPPING_ICONS[0]); setShowToppingForm(false);
+  };
+  const removeTopping = (id) => setToppings((prev) => prev.filter((t) => t.id !== id));
 
   const save = () => {
     const p = Number(price);
     if (!name.trim() || !p || p <= 0) return;
-    onSave({ id: initial?.id || uid("p"), name: name.trim(), price: p, category, icon, image });
+    onSave({ id: initial?.id || uid("p"), name: name.trim(), price: p, category, icon, image, toppings });
   };
 
   return (
@@ -825,7 +896,69 @@ function ProductModal({ initial, categories, onClose, onSave }) {
           </>
         )}
 
+        <label className="field-label">ท็อปปิ้ง (ไม่บังคับ)</label>
+        <div className="topping-list">
+          {toppings.length === 0 && !showToppingForm && (
+            <div className="topping-empty">ยังไม่มีท็อปปิ้ง</div>
+          )}
+          {toppings.map((t) => (
+            <div className="topping-row" key={t.id}>
+              <span className="topping-icon">{t.icon}</span>
+              <span className="topping-name">{t.name}</span>
+              <span className="topping-price">+฿{fmt(t.price)}</span>
+              <button className="topping-remove" onClick={() => removeTopping(t.id)}><X size={14} /></button>
+            </div>
+          ))}
+        </div>
+
+        {showToppingForm ? (
+          <div className="topping-form">
+            <div className="topping-icon-grid">
+              {TOPPING_ICONS.map((ic) => (
+                <button key={ic} className={`icon-choice ${tIcon === ic ? "active" : ""}`} onClick={() => setTIcon(ic)}>{ic}</button>
+              ))}
+            </div>
+            <input className="field-input" value={tName} onChange={(e) => setTName(e.target.value)} placeholder="ชื่อท็อปปิ้ง เช่น สตรอเบอร์รี่" />
+            <input className="field-input" type="number" min="0" value={tPrice} onChange={(e) => setTPrice(e.target.value)} placeholder="ราคาเพิ่ม" />
+            <div className="topping-form-actions">
+              <button className="wizard-back-btn" onClick={() => setShowToppingForm(false)}>ยกเลิก</button>
+              <button className="wizard-next-btn" onClick={addTopping}>เพิ่ม</button>
+            </div>
+          </div>
+        ) : (
+          <button className="topping-add-btn" onClick={() => setShowToppingForm(true)}><Plus size={16} /> เพิ่มท็อปปิ้ง</button>
+        )}
+
         <button className="confirm-btn" onClick={save}>บันทึกสินค้า</button>
+      </div>
+    </div>
+  );
+}
+
+function ToppingPickerModal({ product, onClose, onConfirm }) {
+  const [selected, setSelected] = useState([]);
+  const toggle = (t) => setSelected((prev) => prev.some((x) => x.id === t.id) ? prev.filter((x) => x.id !== t.id) : [...prev, t]);
+  const total = product.price + selected.reduce((s, t) => s + t.price, 0);
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head"><span>{product.name}</span>
+          <button className="icon-btn" onClick={onClose}><X size={18} /></button>
+        </div>
+        <label className="field-label">เลือกท็อปปิ้ง (เลือกได้หลายอย่าง)</label>
+        <div className="topping-pick-list">
+          {product.toppings.map((t) => (
+            <label className="topping-pick-row" key={t.id}>
+              <input type="checkbox" checked={selected.some((x) => x.id === t.id)} onChange={() => toggle(t)} />
+              <span className="topping-icon">{t.icon}</span>
+              <span className="topping-name">{t.name}</span>
+              <span className="topping-price">+฿{fmt(t.price)}</span>
+            </label>
+          ))}
+        </div>
+        <div className="topping-total-row"><span>ราคารวม</span><span>฿{fmt(total)}</span></div>
+        <button className="confirm-btn" onClick={() => onConfirm(selected)}>เพิ่มลงตะกร้า</button>
       </div>
     </div>
   );
@@ -991,6 +1124,22 @@ const css = `
 .field-input.big { padding:15px; font-size:16px; }
 .field-error { color:var(--peach-deep); font-size:12px; margin-top:6px; }
 .icon-grid { display:grid; grid-template-columns:repeat(8, 1fr); gap:6px; margin-top:6px; }
+
+.topping-list { margin-top:6px; }
+.topping-empty { color:var(--ink-soft); font-size:12.5px; padding:6px 0; }
+.topping-row { display:flex; align-items:center; gap:8px; background:var(--card); border-radius:12px; padding:8px 12px; margin-bottom:6px; box-shadow: var(--shadow); }
+.topping-icon { font-size:16px; }
+.topping-name { flex:1; font-size:13.5px; font-weight:500; }
+.topping-price { font-size:13px; color:var(--peach-deep); font-weight:600; }
+.topping-remove { background:none; border:none; color:var(--ink-soft); cursor:pointer; display:flex; }
+.topping-add-btn { width:100%; margin-top:6px; background:var(--card); border:1.5px dashed var(--line); color:var(--peach-deep); border-radius:12px; padding:10px; font-family:'Prompt'; font-size:13.5px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px; }
+.topping-form { background:var(--card); border-radius:14px; padding:12px; margin-top:6px; box-shadow: var(--shadow); }
+.topping-icon-grid { display:grid; grid-template-columns:repeat(7, 1fr); gap:6px; margin-bottom:8px; }
+.topping-form input { margin-bottom:8px; }
+.topping-form-actions { display:flex; gap:8px; }
+.topping-pick-list { max-height:260px; overflow-y:auto; margin-top:6px; }
+.topping-pick-row { display:flex; align-items:center; gap:10px; background:var(--card); border-radius:12px; padding:10px 12px; margin-bottom:6px; box-shadow: var(--shadow); font-family:'Prompt'; }
+.topping-total-row { display:flex; justify-content:space-between; font-weight:700; font-size:16px; margin-top:14px; color:var(--peach-deep); }
 .icon-choice { border:1.5px solid var(--line); background:var(--card); border-radius:10px; padding:6px 0; font-size:17px; cursor:pointer; }
 .icon-choice.active { border-color:var(--yellow-deep); background:var(--yellow); }
 .confirm-btn { width:100%; margin-top:18px; background:var(--yellow-deep); color:var(--ink); border:none; border-radius:999px; padding:13px; font-family:'Prompt'; font-weight:600; font-size:14.5px; cursor:pointer; }
@@ -1086,6 +1235,29 @@ const css = `
 .cropper-viewport img { touch-action:none; }
 .cropper-zoom { width:100%; margin-top:14px; accent-color: var(--yellow-deep); }
 .cropper-hint { text-align:center; font-size:11.5px; color:var(--ink-soft); font-family:'Prompt'; margin-top:4px; }
+
+.print-btn {
+  width:100%; margin-top:12px; background:white; border:1.5px solid var(--line); color:var(--ink);
+  border-radius:999px; padding:11px; font-family:'Prompt'; font-weight:500; font-size:13.5px; cursor:pointer;
+  display:flex; align-items:center; justify-content:center; gap:8px;
+}
+.print-btn:hover { border-color: var(--yellow-deep); }
+
+.print-receipt { display: none; }
+@media print {
+  body * { visibility: hidden; }
+  .print-receipt, .print-receipt * { visibility: visible; }
+  .print-receipt {
+    display: block !important; position: absolute; left: 0; top: 0; width: 100%;
+    padding: 16px; font-family: 'Prompt', sans-serif; color: #111;
+  }
+  .pr-shop { font-weight:700; font-size:18px; text-align:center; margin-bottom:2px; }
+  .pr-time { font-size:12px; text-align:center; color:#555; margin-bottom:10px; }
+  .pr-divider { border-top:1px dashed #999; margin:8px 0; }
+  .pr-row { display:flex; justify-content:space-between; font-size:13px; padding:2px 0; }
+  .pr-total { font-weight:700; font-size:15px; }
+  .pr-thanks { text-align:center; margin-top:16px; font-size:12px; }
+}
 
 @media (max-width:760px) {
   .pos-layout { flex-direction:column; }
