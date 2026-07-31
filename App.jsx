@@ -1,3 +1,4 @@
+import "./storage";
 import React, { useState, useEffect, useRef } from "react";
 import {
   Plus, Minus, Trash2, History, X, Banknote, ArrowLeftRight, ArrowLeft,
