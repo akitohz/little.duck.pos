@@ -82,6 +82,7 @@ function buildPromptPayPayload(target, amount) {
 
 const ICON_CHOICES = ["🍰", "🎂", "🍫", "🍓", "🧀", "🍪", "🧈", "🌸", "🥐", "🍞", "🍩", "☕", "🍵", "🍊", "🥧", "🧁"];
 const TOPPING_ICONS = ["🍫", "🍓", "🫐", "🍌", "🍊", "🥥", "🍋", "🍪", "🌰", "🧁", "🎀", "🎁", "🏞️"];
+const SIZE_LABELS = ["1/2 ปอนด์", "1 ปอนด์", "2 ปอนด์", "3 ปอนด์"];
 
 // ================= Image cropper =================
 function ImageCropper({ src, round, onCancel, onConfirm }) {
@@ -244,21 +245,28 @@ export default function BakeryPOS() {
   };
   const selectProduct = (p) => {
     const toppings = getEffectiveToppings(p);
-    if (toppings.length > 0) setShowToppingPicker({ ...p, toppings });
-    else addToCart(p);
+    const sizes = p.sizes || [];
+    const cat = categories.find((c) => c.name === p.category);
+    const needsNote = !!cat?.hasNote;
+    if (toppings.length > 0 || sizes.length > 0 || needsNote) {
+      setShowToppingPicker({ ...p, toppings, sizes, needsNote });
+    } else {
+      addToCart(p);
+    }
   };
-  const addToCartWithToppings = (p, selectedToppings) => {
+  const addToCartWithToppings = (p, { size, selectedToppings, note }) => {
     // selectedToppings: [{id, name, price, icon, qty}] with qty > 0
     const toppingKey = selectedToppings.map((t) => `${t.id}:${t.qty}`).sort().join("-");
-    const cartId = toppingKey ? `${p.id}__${toppingKey}` : p.id;
+    const cartId = [p.id, size?.id || "", toppingKey, note || ""].join("__");
+    const basePrice = size ? size.price : p.price;
     const extra = selectedToppings.reduce((s, t) => s + t.price * t.qty, 0);
-    const name = selectedToppings.length
-      ? `${p.name} (+${selectedToppings.map((t) => `${t.name}${t.qty > 1 ? ` x${t.qty}` : ""}`).join(", ")})`
-      : p.name;
+    let name = p.name;
+    if (size) name += ` (${size.label})`;
+    if (selectedToppings.length) name += ` (+${selectedToppings.map((t) => `${t.name}${t.qty > 1 ? ` x${t.qty}` : ""}`).join(", ")})`;
     setCart((prev) => {
       const ex = prev.find((i) => i.id === cartId);
       if (ex) return prev.map((i) => (i.id === cartId ? { ...i, qty: i.qty + 1 } : i));
-      return [...prev, { id: cartId, name, price: p.price + extra, image: p.image, icon: p.icon, qty: 1, toppings: selectedToppings }];
+      return [...prev, { id: cartId, name, price: basePrice + extra, image: p.image, icon: p.icon, qty: 1, toppings: selectedToppings, note: note || "" }];
     });
     setShowToppingPicker(null);
   };
@@ -432,6 +440,7 @@ export default function BakeryPOS() {
                       <span className="ri-thumb">{i.image ? <img src={i.image} alt="" /> : <span>{i.icon || "🍰"}</span>}</span>
                       <span className="ri-name">{i.name}</span>
                     </div>
+                    {i.note && <div className="ri-note">📝 {i.note}</div>}
                     <div className="ri-controls">
                       <button className="qty-btn" onClick={() => changeQty(i.id, -1)}><Minus size={12} /></button>
                       <span className="qty-val">{i.qty}</span>
@@ -550,7 +559,7 @@ export default function BakeryPOS() {
       {showToppingPicker && (
         <ToppingPickerModal product={showToppingPicker}
           onClose={() => setShowToppingPicker(null)}
-          onConfirm={(selected) => addToCartWithToppings(showToppingPicker, selected)} />
+          onConfirm={(options) => addToCartWithToppings(showToppingPicker, options)} />
       )}
 
       {showPayModal && (
@@ -635,10 +644,13 @@ function ReceiptPrintable({ shop, order }) {
       <div className="pr-time">{new Date(order.time).toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" })}</div>
       <div className="pr-divider" />
       {order.items.map((i) => (
-        <div className="pr-row" key={i.id}>
-          <span>{i.name} x{i.qty}</span>
-          <span>฿{fmt(i.price * i.qty)}</span>
-        </div>
+        <React.Fragment key={i.id}>
+          <div className="pr-row">
+            <span>{i.name} x{i.qty}</span>
+            <span>฿{fmt(i.price * i.qty)}</span>
+          </div>
+          {i.note && <div className="pr-note">📝 {i.note}</div>}
+        </React.Fragment>
       ))}
       <div className="pr-divider" />
       <div className="pr-row"><span>ยอดรวม</span><span>฿{fmt(order.subtotal)}</span></div>
@@ -945,16 +957,19 @@ function ProductModal({ initial, categories, onClose, onSave, onDelete }) {
   const [image, setImage] = useState(initial?.image || null);
   const [toppings, setToppings] = useState(initial?.toppings || []);
   const [hiddenToppingIds, setHiddenToppingIds] = useState(initial?.hiddenToppingIds || []);
+  const [sizes, setSizes] = useState(initial?.sizes || []);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const save = () => {
     const p = Number(price);
     if (!name.trim() || !p || p <= 0) return;
-    onSave({ id: initial?.id || uid("p"), name: name.trim(), price: p, category, icon, image, toppings, hiddenToppingIds });
+    onSave({ id: initial?.id || uid("p"), name: name.trim(), price: p, category, icon, image, toppings, hiddenToppingIds, sizes });
   };
 
   const categoryToppings = categories.find((c) => c.name === category)?.toppings || [];
   const toggleHidden = (id) => setHiddenToppingIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+  const toggleSize = (label) => setSizes((prev) => prev.some((s) => s.label === label) ? prev.filter((s) => s.label !== label) : [...prev, { id: uid("size"), label, price: 0 }]);
+  const setSizePrice = (label, price) => setSizes((prev) => prev.map((s) => (s.label === label ? { ...s, price: Number(price) || 0 } : s)));
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -1005,6 +1020,25 @@ function ProductModal({ initial, categories, onClose, onSave, onDelete }) {
         <label className="field-label">ท็อปปิ้งเพิ่มเติมเฉพาะสินค้านี้ (ไม่บังคับ)</label>
         <ToppingsEditor toppings={toppings} onChange={setToppings} />
 
+        <label className="field-label">ขนาด (ไม่บังคับ - ถ้าติ๊กไว้ ลูกค้าจะเลือกขนาดตอนสั่งซื้อ)</label>
+        <div className="size-editor-list">
+          {SIZE_LABELS.map((label) => {
+            const s = sizes.find((x) => x.label === label);
+            return (
+              <div className="size-editor-row" key={label}>
+                <label className="size-editor-checkbox">
+                  <input type="checkbox" checked={!!s} onChange={() => toggleSize(label)} />
+                  <span>{label}</span>
+                </label>
+                {s && (
+                  <input className="field-input size-price-input" type="number" min="0" value={s.price}
+                    onChange={(e) => setSizePrice(label, e.target.value)} placeholder="ราคา" />
+                )}
+              </div>
+            );
+          })}
+        </div>
+
         <button className="confirm-btn" onClick={save}>บันทึกสินค้า</button>
         {onDelete && (
           confirmDelete ? (
@@ -1026,16 +1060,20 @@ function ProductModal({ initial, categories, onClose, onSave, onDelete }) {
 
 function ToppingPickerModal({ product, onClose, onConfirm }) {
   const [qtyMap, setQtyMap] = useState({});
+  const [sizeId, setSizeId] = useState(product.sizes?.[0]?.id || null);
+  const [note, setNote] = useState("");
   const changeQty = (t, delta) => {
     setQtyMap((prev) => {
       const next = Math.max(0, (prev[t.id] || 0) + delta);
       return { ...prev, [t.id]: next };
     });
   };
-  const selected = product.toppings
+  const selectedToppings = product.toppings
     .map((t) => ({ ...t, qty: qtyMap[t.id] || 0 }))
     .filter((t) => t.qty > 0);
-  const total = product.price + selected.reduce((s, t) => s + t.price * t.qty, 0);
+  const selectedSize = product.sizes?.find((s) => s.id === sizeId) || null;
+  const basePrice = selectedSize ? selectedSize.price : product.price;
+  const total = basePrice + selectedToppings.reduce((s, t) => s + t.price * t.qty, 0);
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -1043,26 +1081,55 @@ function ToppingPickerModal({ product, onClose, onConfirm }) {
         <div className="modal-head"><span>{product.name}</span>
           <button className="icon-btn" onClick={onClose}><X size={18} /></button>
         </div>
-        <label className="field-label">เลือกท็อปปิ้ง (แตะ + เพื่อเพิ่มจำนวนได้)</label>
-        <div className="topping-pick-list">
-          {product.toppings.map((t) => {
-            const qty = qtyMap[t.id] || 0;
-            return (
-              <div className="topping-pick-row" key={t.id}>
-                <span className="topping-icon">{t.icon}</span>
-                <span className="topping-name">{t.name}</span>
-                <span className="topping-price">+฿{fmt(t.price)}</span>
-                <div className="topping-qty-controls">
-                  <button className="qty-btn" onClick={() => changeQty(t, -1)} disabled={qty === 0}><Minus size={12} /></button>
-                  <span className="qty-val">{qty}</span>
-                  <button className="qty-btn" onClick={() => changeQty(t, 1)}><Plus size={12} /></button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+
+        {product.sizes && product.sizes.length > 0 && (
+          <>
+            <label className="field-label">เลือกขนาด</label>
+            <div className="size-pick-list">
+              {product.sizes.map((s) => (
+                <label className="size-pick-row" key={s.id}>
+                  <input type="radio" name="size" checked={sizeId === s.id} onChange={() => setSizeId(s.id)} />
+                  <span className="size-label">{s.label}</span>
+                  <span className="topping-price">฿{fmt(s.price)}</span>
+                </label>
+              ))}
+            </div>
+          </>
+        )}
+
+        {product.toppings.length > 0 && (
+          <>
+            <label className="field-label">เลือกท็อปปิ้ง (แตะ + เพื่อเพิ่มจำนวนได้)</label>
+            <div className="topping-pick-list">
+              {product.toppings.map((t) => {
+                const qty = qtyMap[t.id] || 0;
+                return (
+                  <div className="topping-pick-row" key={t.id}>
+                    <span className="topping-icon">{t.icon}</span>
+                    <span className="topping-name">{t.name}</span>
+                    <span className="topping-price">+฿{fmt(t.price)}</span>
+                    <div className="topping-qty-controls">
+                      <button className="qty-btn" onClick={() => changeQty(t, -1)} disabled={qty === 0}><Minus size={12} /></button>
+                      <span className="qty-val">{qty}</span>
+                      <button className="qty-btn" onClick={() => changeQty(t, 1)}><Plus size={12} /></button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+
+        {product.needsNote && (
+          <>
+            <label className="field-label">หมายเหตุ (ไม่บังคับ)</label>
+            <textarea className="field-input note-textarea" value={note} onChange={(e) => setNote(e.target.value)}
+              placeholder="เช่น เขียนหน้าเค้กว่า... / ไม่ใส่เทียน" rows={3} />
+          </>
+        )}
+
         <div className="topping-total-row"><span>ราคารวม</span><span>฿{fmt(total)}</span></div>
-        <button className="confirm-btn" onClick={() => onConfirm(selected)}>เพิ่มลงตะกร้า</button>
+        <button className="confirm-btn" onClick={() => onConfirm({ size: selectedSize, selectedToppings, note })}>เพิ่มลงตะกร้า</button>
       </div>
     </div>
   );
@@ -1078,7 +1145,10 @@ function HistoryDetailModal({ order, onClose, onDelete, onFinalize }) {
         </div>
         <div className="detail-time">{new Date(order.time).toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" })}</div>
         {order.items.map((i) => (
-          <div className="receipt-row" key={i.id}><span>{i.icon || "🍰"} {i.name} x{i.qty}</span><span>฿{fmt(i.price * i.qty)}</span></div>
+          <React.Fragment key={i.id}>
+            <div className="receipt-row"><span>{i.icon || "🍰"} {i.name} x{i.qty}</span><span>฿{fmt(i.price * i.qty)}</span></div>
+            {i.note && <div className="ri-note">📝 {i.note}</div>}
+          </React.Fragment>
         ))}
         <div className="receipt-divider" />
         <div className="receipt-row"><span>ยอดรวม</span><span>฿{fmt(order.subtotal)}</span></div>
@@ -1119,9 +1189,10 @@ function HistoryDetailModal({ order, onClose, onDelete, onFinalize }) {
 function CategoryModal({ initial, products, onClose, onSave, onDelete }) {
   const [name, setName] = useState(initial?.name || "");
   const [toppings, setToppings] = useState(initial?.toppings || []);
+  const [hasNote, setHasNote] = useState(!!initial?.hasNote);
   const [selected, setSelected] = useState(products.filter((p) => p.category === initial?.name).map((p) => p.id));
   const toggle = (id) => setSelected((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
-  const save = () => { if (!name.trim()) return; onSave({ id: initial.id, name: name.trim(), toppings }, selected); };
+  const save = () => { if (!name.trim()) return; onSave({ id: initial.id, name: name.trim(), toppings, hasNote }, selected); };
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -1131,6 +1202,11 @@ function CategoryModal({ initial, products, onClose, onSave, onDelete }) {
         </div>
         <label className="field-label">ชื่อหมวดหมู่ *</label>
         <input className="field-input" value={name} onChange={(e) => setName(e.target.value)} placeholder="เช่น เค้ก" />
+
+        <label className="topping-override-toggle">
+          <input type="checkbox" checked={hasNote} onChange={(e) => setHasNote(e.target.checked)} />
+          <span>เปิดช่องหมายเหตุสำหรับสินค้าในหมวดนี้ (ลูกค้ากรอกข้อความเพิ่มเติมตอนสั่งซื้อ)</span>
+        </label>
 
         <label className="field-label">ท็อปปิ้งของหมวดนี้ (ไม่บังคับ)</label>
         <div className="topping-inherit-note">ถ้าตั้งไว้ที่นี่ สินค้าทุกตัวในหมวดนี้จะมีตัวเลือกท็อปปิ้งชุดเดียวกันหมด</div>
@@ -1231,6 +1307,7 @@ const css = `
 .ri-thumb { width:34px; height:34px; border-radius:11px; overflow:hidden; display:flex; align-items:center; justify-content:center; background:var(--surface); flex-shrink:0; }
 .ri-thumb img { width:100%; height:100%; object-fit:cover; }
 .ri-name { font-weight:500; }
+.ri-note { font-size:11.5px; color:var(--ink-soft); font-style:italic; margin-left:44px; margin-top:-2px; }
 .ri-controls { display:flex; align-items:center; gap:8px; }
 .qty-btn { width:22px; height:22px; border-radius:50%; border:none; background:var(--surface); color:var(--ink); display:flex; align-items:center; justify-content:center; cursor:pointer; }
 .qty-val { font-variant-numeric:tabular-nums; min-width:16px; text-align:center; font-size:13px; font-weight:600; }
@@ -1304,6 +1381,14 @@ const css = `
 .topping-form-actions { display:flex; gap:8px; }
 .topping-pick-list { max-height:320px; overflow-y:auto; margin-top:6px; }
 .topping-pick-row { display:flex; align-items:center; gap:10px; background:var(--card); border-radius:12px; padding:10px 12px; margin-bottom:6px; box-shadow: var(--shadow); font-family:'Prompt'; }
+.size-pick-list { margin-top:6px; margin-bottom:6px; }
+.size-pick-row { display:flex; align-items:center; gap:10px; background:var(--card); border-radius:12px; padding:10px 12px; margin-bottom:6px; box-shadow: var(--shadow); font-family:'Prompt'; cursor:pointer; }
+.size-label { flex:1; font-size:13.5px; font-weight:500; }
+.size-editor-list { margin-top:6px; }
+.size-editor-row { display:flex; align-items:center; gap:10px; background:var(--card); border-radius:12px; padding:8px 12px; margin-bottom:6px; box-shadow: var(--shadow); }
+.size-editor-checkbox { display:flex; align-items:center; gap:8px; flex:1; font-family:'Prompt'; font-size:13.5px; cursor:pointer; }
+.size-price-input { width:110px; padding:8px 10px; margin:0; }
+.note-textarea { resize:vertical; font-family:'Prompt'; }
 .topping-qty-controls { display:flex; align-items:center; gap:8px; }
 .topping-qty-controls .qty-btn:disabled { opacity:0.3; cursor:not-allowed; }
 .topping-total-row { display:flex; justify-content:space-between; font-weight:700; font-size:16px; margin-top:14px; color:var(--peach-deep); }
@@ -1433,6 +1518,7 @@ const css = `
   .pr-time { font-size:12px; text-align:center; color:#555; margin-bottom:10px; }
   .pr-divider { border-top:1px dashed #999; margin:8px 0; }
   .pr-row { display:flex; justify-content:space-between; font-size:13px; padding:2px 0; }
+  .pr-note { font-size:11px; font-style:italic; color:#555; padding-left:8px; margin-bottom:2px; }
   .pr-total { font-weight:700; font-size:15px; }
   .pr-thanks { text-align:center; margin-top:16px; font-size:12px; }
 }
