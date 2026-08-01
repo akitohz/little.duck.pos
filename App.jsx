@@ -982,17 +982,6 @@ function ProductModal({ initial, categories, onClose, onSave, onDelete }) {
           {categories.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
         </select>
 
-        {!image && (
-          <>
-            <label className="field-label">ไอคอน (ใช้แทนรูป)</label>
-            <div className="icon-grid">
-              {ICON_CHOICES.map((ic) => (
-                <button key={ic} className={`icon-choice ${icon === ic ? "active" : ""}`} onClick={() => setIcon(ic)}>{ic}</button>
-              ))}
-            </div>
-          </>
-        )}
-
         {categoryToppings.length > 0 && (
           <>
             <label className="field-label">ท็อปปิ้งจากหมวดหมู่ "{category}"</label>
