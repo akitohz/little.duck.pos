@@ -348,14 +348,28 @@ export default function BakeryPOS() {
   useEffect(() => {
     if (!dragActiveId) return;
     const getPoint = (e) => (e.touches && e.touches[0] ? e.touches[0] : e);
+    const findNearestCard = (x, y) => {
+      const cards = document.querySelectorAll("[data-product-card]");
+      let closestId = null;
+      let minDist = Infinity;
+      cards.forEach((el) => {
+        const rect = el.getBoundingClientRect();
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height / 2;
+        const dist = (cx - x) * (cx - x) + (cy - y) * (cy - y);
+        if (dist < minDist) {
+          minDist = dist;
+          closestId = el.getAttribute("data-product-card");
+        }
+      });
+      return closestId;
+    };
     const handleMove = (e) => {
       if (e.cancelable) e.preventDefault();
       const pt = getPoint(e);
       setDragPos({ x: pt.clientX, y: pt.clientY });
-      const el = document.elementFromPoint(pt.clientX, pt.clientY);
-      const card = el && el.closest && el.closest("[data-product-card]");
-      if (card) {
-        const cid = card.getAttribute("data-product-card");
+      const cid = findNearestCard(pt.clientX, pt.clientY);
+      if (cid) {
         dragOverIdRef.current = cid;
         setDragOverId((prev) => (prev === cid ? prev : cid));
       }
