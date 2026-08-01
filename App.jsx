@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import {
   Plus, Minus, Trash2, History, X, Banknote, ArrowLeftRight, ArrowLeft,
-  Camera, Check, Settings, Package, FolderOpen, QrCode, ChevronRight,
+  Camera, Check, Settings, Package, FolderOpen, QrCode, ChevronRight, GripVertical,
   TrendingUp, Calendar, Store, ArrowRight, Printer, Edit2, Clock
 } from "lucide-react";
 
@@ -210,6 +210,10 @@ export default function BakeryPOS() {
   const [showAddCategory, setShowAddCategory] = useState(false);
   const [editingCategory, setEditingCategory] = useState(null);
   const [showToppingPicker, setShowToppingPicker] = useState(null);
+  const [dragActiveId, setDragActiveId] = useState(null);
+  const [dragOverId, setDragOverId] = useState(null);
+  const draggingIdRef = useRef(null);
+  const dragOverIdRef = useRef(null);
 
   useEffect(() => {
     (async () => {
@@ -304,12 +308,71 @@ export default function BakeryPOS() {
   const saveProduct = (prod) => {
     setProducts((prev) => {
       const idx = prev.findIndex((p) => p.id === prod.id);
-      if (idx >= 0) { const cp = [...prev]; cp[idx] = prod; return cp; }
-      return [...prev, prod];
+      if (idx >= 0) { const cp = [...prev]; cp[idx] = { ...prod, order: prev[idx].order ?? idx }; return cp; }
+      const maxOrder = prev.reduce((m, p) => Math.max(m, p.order ?? 0), -1);
+      return [...prev, { ...prod, order: maxOrder + 1 }];
     });
   };
   const deleteProduct = (id) => setProducts((prev) => prev.filter((p) => p.id !== id));
   const deleteOrder = (id) => setOrders((prev) => prev.filter((o) => o.id !== id));
+  const reorderProducts = (draggedId, targetId) => {
+    if (draggedId === targetId) return;
+    setProducts((prev) => {
+      const scopeFilter = (p) => {
+        if (activeCategory === "ทั้งหมด") return true;
+        if (activeCategory === "ไม่ระบุหมวด") return !p.category;
+        return p.category === activeCategory;
+      };
+      const scoped = prev.filter(scopeFilter).slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+      const orderSlots = scoped.map((p) => p.order ?? 0);
+      const fromIdx = scoped.findIndex((p) => p.id === draggedId);
+      const toIdx = scoped.findIndex((p) => p.id === targetId);
+      if (fromIdx === -1 || toIdx === -1) return prev;
+      const reordered = scoped.slice();
+      const [moved] = reordered.splice(fromIdx, 1);
+      reordered.splice(toIdx, 0, moved);
+      const idToNewOrder = {};
+      reordered.forEach((p, i) => { idToNewOrder[p.id] = orderSlots[i]; });
+      return prev.map((p) => (idToNewOrder[p.id] !== undefined ? { ...p, order: idToNewOrder[p.id] } : p));
+    });
+  };
+
+  const startDrag = (id) => {
+    draggingIdRef.current = id;
+    dragOverIdRef.current = id;
+    setDragActiveId(id);
+  };
+
+  useEffect(() => {
+    if (!dragActiveId) return;
+    const handleMove = (e) => {
+      if (e.cancelable) e.preventDefault();
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const card = el && el.closest && el.closest("[data-product-card]");
+      if (card) {
+        const cid = card.getAttribute("data-product-card");
+        dragOverIdRef.current = cid;
+        setDragOverId((prev) => (prev === cid ? prev : cid));
+      }
+    };
+    const handleEnd = () => {
+      const from = draggingIdRef.current;
+      const to = dragOverIdRef.current;
+      if (from && to && from !== to) reorderProducts(from, to);
+      draggingIdRef.current = null;
+      dragOverIdRef.current = null;
+      setDragActiveId(null);
+      setDragOverId(null);
+    };
+    window.addEventListener("pointermove", handleMove, { passive: false });
+    window.addEventListener("pointerup", handleEnd);
+    window.addEventListener("pointercancel", handleEnd);
+    return () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleEnd);
+      window.removeEventListener("pointercancel", handleEnd);
+    };
+  }, [dragActiveId]);
 
   const saveCategory = (cat, productIds) => {
     setCategories((prev) => {
@@ -330,11 +393,14 @@ export default function BakeryPOS() {
 
   const hasUncategorized = products.some((p) => !p.category);
   const posTabs = ["ทั้งหมด", ...categories.map((c) => c.name), ...(hasUncategorized ? ["ไม่ระบุหมวด"] : [])];
-  const visibleProducts = products.filter((p) => {
-    if (activeCategory === "ทั้งหมด") return true;
-    if (activeCategory === "ไม่ระบุหมวด") return !p.category;
-    return p.category === activeCategory;
-  });
+  const visibleProducts = products
+    .filter((p) => {
+      if (activeCategory === "ทั้งหมด") return true;
+      if (activeCategory === "ไม่ระบุหมวด") return !p.category;
+      return p.category === activeCategory;
+    })
+    .slice()
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 
   const dayOrders = orders.filter((o) => o.time.slice(0, 10) === selectedDate);
   const paidDayOrders = dayOrders.filter((o) => o.paymentMethod !== "pending");
@@ -411,9 +477,23 @@ export default function BakeryPOS() {
             <div className="product-grid">
               {visibleProducts.length === 0 && <div className="empty-note">ยังไม่มีสินค้าในหมวดนี้</div>}
               {visibleProducts.map((p, idx) => (
-                <div className="price-tag-card" key={p.id} onClick={() => selectProduct(p)} role="button" tabIndex={0}>
+                <div
+                  className={`price-tag-card ${dragActiveId === p.id ? "dragging" : ""} ${dragOverId === p.id && dragActiveId && dragActiveId !== p.id ? "drag-over" : ""}`}
+                  key={p.id}
+                  data-product-card={p.id}
+                  onClick={() => selectProduct(p)}
+                  role="button"
+                  tabIndex={0}
+                >
                   <button className="tag-edit-btn" onClick={(e) => { e.stopPropagation(); setShowAddProduct(p); }}>
                     <Edit2 size={13} />
+                  </button>
+                  <button
+                    className="tag-drag-handle"
+                    onClick={(e) => e.stopPropagation()}
+                    onPointerDown={(e) => { e.stopPropagation(); startDrag(p.id); }}
+                  >
+                    <GripVertical size={14} />
                   </button>
                   <div className="tag-media" style={{ background: PALETTE[idx % PALETTE.length] }}>
                     {p.image ? <img src={p.image} alt={p.name} /> : <span className="tag-icon">{p.icon || "🍰"}</span>}
@@ -1403,6 +1483,10 @@ const css = `
 .delete-btn { width:100%; margin-top:10px; background:none; border:1px solid var(--line); color:var(--peach-deep); border-radius:999px; padding:10px; font-family:'Prompt'; font-size:13.5px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px; }
 .tag-edit-btn { position:absolute; top:8px; right:8px; width:26px; height:26px; border-radius:50%; background:rgba(255,255,255,0.9); border:none; display:flex; align-items:center; justify-content:center; color:var(--ink-soft); box-shadow: var(--shadow); cursor:pointer; z-index:2; }
 .tag-edit-btn:hover { color:var(--yellow-deep); }
+.tag-drag-handle { position:absolute; top:8px; left:8px; width:24px; height:24px; border-radius:50%; background:rgba(255,255,255,0.9); border:none; display:flex; align-items:center; justify-content:center; color:var(--ink-soft); box-shadow: var(--shadow); cursor:grab; z-index:2; touch-action:none; }
+.tag-drag-handle:active { cursor:grabbing; }
+.price-tag-card.dragging { opacity:0.45; box-shadow:none; }
+.price-tag-card.drag-over { outline:2px dashed var(--yellow-deep); outline-offset:2px; }
 .confirm-delete-row { margin-top:10px; background:#FDEEEE; border-radius:14px; padding:12px; text-align:center; font-family:'Prompt'; font-size:13px; color:#B23B3B; }
 .confirm-delete-actions { display:flex; gap:8px; margin-top:10px; }
 .delete-btn-confirm { flex:1; background:#D64545; color:white; border:none; border-radius:999px; padding:10px; font-family:'Prompt'; font-weight:600; font-size:13.5px; cursor:pointer; }
