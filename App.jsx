@@ -2,13 +2,14 @@ import React, { useState, useEffect, useRef } from "react";
 import {
   Plus, Minus, Trash2, History, X, Banknote, ArrowLeftRight, ArrowLeft,
   Camera, Check, Settings, Package, FolderOpen, QrCode, ChevronRight,
-  TrendingUp, Calendar, Store, ArrowRight, Printer, Edit2
+  TrendingUp, Calendar, Store, ArrowRight, Printer, Edit2, Clock
 } from "lucide-react";
 
 const PALETTE = ["#BFE3F0", "#C9EFCB", "#FCE9B0", "#F3D3C7"];
 
 // ================= helpers =================
 const fmt = (n) => new Intl.NumberFormat("th-TH", { maximumFractionDigits: 2 }).format(n || 0);
+const paymentLabel = (m) => (m === "cash" ? "เงินสด" : m === "pending" ? "จอง/รอจ่าย" : "โอนเงิน");
 const uid = (p) => `${p}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
 async function loadKey(key, fallback) {
@@ -197,6 +198,7 @@ export default function BakeryPOS() {
   const [discount, setDiscount] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState("cash");
   const [cashReceived, setCashReceived] = useState("");
+  const [customerPhone, setCustomerPhone] = useState("");
   const [showPayModal, setShowPayModal] = useState(false);
   const [paidStamp, setPaidStamp] = useState(false);
   const [lastOrder, setLastOrder] = useState(null);
@@ -226,6 +228,13 @@ export default function BakeryPOS() {
   useEffect(() => { if (loaded) saveKey("bakery-categories", categories); }, [categories, loaded]);
   useEffect(() => { if (loaded) saveKey("bakery-orders", orders); }, [orders, loaded]);
 
+  const getEffectiveToppings = (p) => {
+    const cat = categories.find((c) => c.name === p.category);
+    const catToppings = (cat?.toppings || []).filter((t) => !(p.hiddenToppingIds || []).includes(t.id));
+    const ownToppings = p.toppings || [];
+    return [...catToppings, ...ownToppings];
+  };
+
   const addToCart = (p) => {
     setCart((prev) => {
       const ex = prev.find((i) => i.id === p.id);
@@ -234,15 +243,17 @@ export default function BakeryPOS() {
     });
   };
   const selectProduct = (p) => {
-    if (p.toppings && p.toppings.length > 0) setShowToppingPicker(p);
+    const toppings = getEffectiveToppings(p);
+    if (toppings.length > 0) setShowToppingPicker({ ...p, toppings });
     else addToCart(p);
   };
   const addToCartWithToppings = (p, selectedToppings) => {
-    const toppingIds = selectedToppings.map((t) => t.id).sort().join("-");
-    const cartId = toppingIds ? `${p.id}__${toppingIds}` : p.id;
-    const extra = selectedToppings.reduce((s, t) => s + t.price, 0);
+    // selectedToppings: [{id, name, price, icon, qty}] with qty > 0
+    const toppingKey = selectedToppings.map((t) => `${t.id}:${t.qty}`).sort().join("-");
+    const cartId = toppingKey ? `${p.id}__${toppingKey}` : p.id;
+    const extra = selectedToppings.reduce((s, t) => s + t.price * t.qty, 0);
     const name = selectedToppings.length
-      ? `${p.name} (+${selectedToppings.map((t) => t.name).join(", ")})`
+      ? `${p.name} (+${selectedToppings.map((t) => `${t.name}${t.qty > 1 ? ` x${t.qty}` : ""}`).join(", ")})`
       : p.name;
     setCart((prev) => {
       const ex = prev.find((i) => i.id === cartId);
@@ -260,22 +271,27 @@ export default function BakeryPOS() {
   const cash = Number(cashReceived) || 0;
   const change = cash - total;
 
-  const resetSale = () => { setCart([]); setDiscount(0); setCashReceived(""); setPaymentMethod("cash"); };
+  const resetSale = () => { setCart([]); setDiscount(0); setCashReceived(""); setPaymentMethod("cash"); setCustomerPhone(""); };
 
   const confirmPayment = () => {
     if (cart.length === 0) return;
     if (paymentMethod === "cash" && cash < total) return;
+    if (paymentMethod === "pending" && !customerPhone.trim()) return;
     const order = {
       id: uid("order"), time: new Date().toISOString(), items: cart,
       subtotal, discount: safeDiscount, total, paymentMethod,
       cash: paymentMethod === "cash" ? cash : total,
       change: paymentMethod === "cash" ? change : 0,
+      customerPhone: paymentMethod === "pending" ? customerPhone.trim() : "",
     };
     setOrders((prev) => [order, ...prev]);
     setLastOrder(order);
     setPaidStamp(true);
   };
   const closeReceipt = () => { setPaidStamp(false); setShowPayModal(false); setLastOrder(null); resetSale(); };
+  const finalizePendingOrder = (orderId, method) => {
+    setOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, paymentMethod: method, cash: o.total, change: 0 } : o)));
+  };
 
   const saveProduct = (prod) => {
     setProducts((prev) => {
@@ -313,12 +329,14 @@ export default function BakeryPOS() {
   });
 
   const dayOrders = orders.filter((o) => o.time.slice(0, 10) === selectedDate);
-  const daySales = dayOrders.reduce((s, o) => s + o.total, 0);
-  const avgOrder = dayOrders.length ? daySales / dayOrders.length : 0;
-  const cashTotal = dayOrders.filter((o) => o.paymentMethod === "cash").reduce((s, o) => s + o.total, 0);
-  const transferTotal = dayOrders.filter((o) => o.paymentMethod === "transfer").reduce((s, o) => s + o.total, 0);
+  const paidDayOrders = dayOrders.filter((o) => o.paymentMethod !== "pending");
+  const pendingDayOrders = dayOrders.filter((o) => o.paymentMethod === "pending");
+  const daySales = paidDayOrders.reduce((s, o) => s + o.total, 0);
+  const avgOrder = paidDayOrders.length ? daySales / paidDayOrders.length : 0;
+  const cashTotal = paidDayOrders.filter((o) => o.paymentMethod === "cash").reduce((s, o) => s + o.total, 0);
+  const transferTotal = paidDayOrders.filter((o) => o.paymentMethod === "transfer").reduce((s, o) => s + o.total, 0);
   const productTally = {};
-  dayOrders.forEach((o) => o.items.forEach((i) => { productTally[i.name] = (productTally[i.name] || 0) + i.qty; }));
+  paidDayOrders.forEach((o) => o.items.forEach((i) => { productTally[i.name] = (productTally[i.name] || 0) + i.qty; }));
   const topProducts = Object.entries(productTally).sort((a, b) => b[1] - a[1]).slice(0, 5);
 
   if (!loaded) return <div className="loading-screen"><style>{css}</style>กำลังโหลด...</div>;
@@ -451,7 +469,7 @@ export default function BakeryPOS() {
             </div>
             <div className="summary-card tint-green">
               <div className="summary-label">จำนวนออเดอร์</div>
-              <div className="summary-value">{dayOrders.length}</div>
+              <div className="summary-value">{paidDayOrders.length}</div>
             </div>
             <div className="summary-card tint-yellow">
               <div className="summary-label">เฉลี่ยต่อบิล</div>
@@ -468,6 +486,10 @@ export default function BakeryPOS() {
               <div className="summary-label"><ArrowLeftRight size={13} /> โอนเงิน</div>
               <div className="summary-value small-val">฿{fmt(transferTotal)}</div>
             </div>
+            <div className="summary-card small">
+              <div className="summary-label"><Clock size={13} /> รอจ่าย</div>
+              <div className="summary-value small-val">{pendingDayOrders.length} รายการ</div>
+            </div>
           </div>
 
           {topProducts.length > 0 && (
@@ -479,13 +501,25 @@ export default function BakeryPOS() {
             </div>
           )}
 
+          {pendingDayOrders.length > 0 && (
+            <div className="top-products pending-card">
+              <div className="top-title"><Clock size={14} /> รายการจอง / รอจ่าย</div>
+              {pendingDayOrders.map((o) => (
+                <button className="pending-row" key={o.id} onClick={() => setHistoryDetail(o)}>
+                  <span>📞 {o.customerPhone || "-"}</span>
+                  <span>฿{fmt(o.total)}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
           <div className="history-list">
             {dayOrders.length === 0 && <div className="empty-note">ไม่มีออเดอร์ในวันนี้</div>}
             {dayOrders.map((o) => (
               <button className="history-row" key={o.id} onClick={() => setHistoryDetail(o)}>
                 <div className="hr-left">
                   <div className="hr-time">{new Date(o.time).toLocaleTimeString("th-TH", { timeStyle: "short" })}</div>
-                  <div className="hr-items">{o.items.length} รายการ · {o.paymentMethod === "cash" ? "เงินสด" : "โอนเงิน"}</div>
+                  <div className="hr-items">{o.items.length} รายการ · {paymentLabel(o.paymentMethod)}</div>
                 </div>
                 <div className="hr-total">฿{fmt(o.total)}</div>
               </button>
@@ -531,6 +565,7 @@ export default function BakeryPOS() {
                 <div className="method-toggle">
                   <button className={`method-btn ${paymentMethod === "cash" ? "active" : ""}`} onClick={() => setPaymentMethod("cash")}><Banknote size={16} /> เงินสด</button>
                   <button className={`method-btn ${paymentMethod === "transfer" ? "active" : ""}`} onClick={() => setPaymentMethod("transfer")}><QrCode size={16} /> สแกนจ่าย</button>
+                  <button className={`method-btn ${paymentMethod === "pending" ? "active" : ""}`} onClick={() => setPaymentMethod("pending")}><Clock size={16} /> จอง/รอจ่าย</button>
                 </div>
                 {paymentMethod === "cash" && (
                   <>
@@ -546,14 +581,28 @@ export default function BakeryPOS() {
                   <QRPayBlock promptpayId={shop.promptpayId} amount={total}
                     onGoSetup={() => { setShowPayModal(false); setStage("onboarding"); setWizardStep(4); }} />
                 )}
-                <button className="confirm-btn" disabled={paymentMethod === "cash" && cash < total} onClick={confirmPayment}>ยืนยันการชำระเงิน</button>
+                {paymentMethod === "pending" && (
+                  <>
+                    <label className="field-label">เบอร์โทรลูกค้า (สำหรับติดต่อ) *</label>
+                    <input className="field-input" type="tel" value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} placeholder="เช่น 0812345678" autoFocus />
+                    <div className="pending-note">ยังไม่รับเงินตอนนี้ ระบบจะเก็บไว้ในรายการ "รอจ่าย" ให้ตามทีหลัง</div>
+                  </>
+                )}
+                <button className="confirm-btn"
+                  disabled={(paymentMethod === "cash" && cash < total) || (paymentMethod === "pending" && !customerPhone.trim())}
+                  onClick={confirmPayment}>
+                  {paymentMethod === "pending" ? "บันทึกการจอง" : "ยืนยันการชำระเงิน"}
+                </button>
               </>
             ) : (
               <div className="stamp-screen">
-                <div className="stamp-badge"><Check size={30} strokeWidth={3} /></div>
-                <div className="stamp">ชำระเงินสำเร็จ</div>
+                <div className={`stamp-badge ${lastOrder?.paymentMethod === "pending" ? "pending" : ""}`}>
+                  {lastOrder?.paymentMethod === "pending" ? <Clock size={28} strokeWidth={2.5} /> : <Check size={30} strokeWidth={3} />}
+                </div>
+                <div className="stamp">{lastOrder?.paymentMethod === "pending" ? "บันทึกการจองแล้ว" : "ชำระเงินสำเร็จ"}</div>
                 <div className="stamp-order-total">฿{fmt(lastOrder?.total || 0)}</div>
                 {lastOrder?.paymentMethod === "cash" && <div className="stamp-change">เงินทอน ฿{fmt(lastOrder.change)}</div>}
+                {lastOrder?.paymentMethod === "pending" && <div className="stamp-change">📞 {lastOrder.customerPhone}</div>}
                 <button className="print-btn" onClick={() => window.print()}><Printer size={16} /> พิมพ์ใบเสร็จ</button>
                 <button className="confirm-btn" onClick={closeReceipt}>ออเดอร์ใหม่</button>
               </div>
@@ -567,6 +616,7 @@ export default function BakeryPOS() {
           order={historyDetail}
           onClose={() => setHistoryDetail(null)}
           onDelete={() => { deleteOrder(historyDetail.id); setHistoryDetail(null); }}
+          onFinalize={(method) => { finalizePendingOrder(historyDetail.id, method); setHistoryDetail(null); }}
         />
       )}
 
@@ -594,12 +644,15 @@ function ReceiptPrintable({ shop, order }) {
       <div className="pr-row"><span>ยอดรวม</span><span>฿{fmt(order.subtotal)}</span></div>
       <div className="pr-row"><span>ส่วนลด</span><span>฿{fmt(order.discount)}</span></div>
       <div className="pr-row pr-total"><span>สุทธิ</span><span>฿{fmt(order.total)}</span></div>
-      <div className="pr-row"><span>ชำระโดย</span><span>{order.paymentMethod === "cash" ? "เงินสด" : "โอนเงิน"}</span></div>
+      <div className="pr-row"><span>ชำระโดย</span><span>{paymentLabel(order.paymentMethod)}</span></div>
       {order.paymentMethod === "cash" && (
         <>
           <div className="pr-row"><span>รับเงิน</span><span>฿{fmt(order.cash)}</span></div>
           <div className="pr-row"><span>เงินทอน</span><span>฿{fmt(order.change)}</span></div>
         </>
+      )}
+      {order.paymentMethod === "pending" && (
+        <div className="pr-row"><span>เบอร์โทรลูกค้า</span><span>{order.customerPhone}</span></div>
       )}
       <div className="pr-thanks">ขอบคุณที่อุดหนุนค่ะ</div>
     </div>
@@ -828,6 +881,62 @@ function QRPayBlock({ promptpayId, amount, onGoSetup }) {
   );
 }
 
+function ToppingsEditor({ toppings, onChange }) {
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [tName, setTName] = useState("");
+  const [tPrice, setTPrice] = useState("");
+  const [tIcon, setTIcon] = useState(TOPPING_ICONS[0]);
+
+  const resetForm = () => { setTName(""); setTPrice(""); setTIcon(TOPPING_ICONS[0]); setShowForm(false); setEditingId(null); };
+  const startAdd = () => { resetForm(); setShowForm(true); };
+  const startEdit = (t) => { setEditingId(t.id); setTName(t.name); setTPrice(t.price); setTIcon(t.icon); setShowForm(true); };
+  const submit = () => {
+    const p = Number(tPrice);
+    if (!tName.trim() || !p || p <= 0) return;
+    if (editingId) onChange(toppings.map((t) => (t.id === editingId ? { ...t, name: tName.trim(), price: p, icon: tIcon } : t)));
+    else onChange([...toppings, { id: uid("top"), name: tName.trim(), price: p, icon: tIcon }]);
+    resetForm();
+  };
+  const remove = (id) => onChange(toppings.filter((t) => t.id !== id));
+
+  return (
+    <>
+      <div className="topping-list">
+        {toppings.length === 0 && !showForm && <div className="topping-empty">ยังไม่มีท็อปปิ้ง</div>}
+        {toppings.map((t) => (
+          <div className="topping-row" key={t.id}>
+            <button className="topping-edit-area" onClick={() => startEdit(t)}>
+              <span className="topping-icon">{t.icon}</span>
+              <span className="topping-name">{t.name}</span>
+              <span className="topping-price">+฿{fmt(t.price)}</span>
+            </button>
+            <button className="topping-remove" onClick={() => remove(t.id)}><X size={14} /></button>
+          </div>
+        ))}
+      </div>
+
+      {showForm ? (
+        <div className="topping-form">
+          <div className="topping-icon-grid">
+            {TOPPING_ICONS.map((ic) => (
+              <button key={ic} className={`icon-choice ${tIcon === ic ? "active" : ""}`} onClick={() => setTIcon(ic)}>{ic}</button>
+            ))}
+          </div>
+          <input className="field-input" value={tName} onChange={(e) => setTName(e.target.value)} placeholder="ชื่อท็อปปิ้ง เช่น สตรอเบอร์รี่" />
+          <input className="field-input" type="number" min="0" value={tPrice} onChange={(e) => setTPrice(e.target.value)} placeholder="ราคาเพิ่ม" />
+          <div className="topping-form-actions">
+            <button className="wizard-back-btn" onClick={resetForm}>ยกเลิก</button>
+            <button className="wizard-next-btn" onClick={submit}>{editingId ? "บันทึก" : "เพิ่ม"}</button>
+          </div>
+        </div>
+      ) : (
+        <button className="topping-add-btn" onClick={startAdd}><Plus size={16} /> เพิ่มท็อปปิ้ง</button>
+      )}
+    </>
+  );
+}
+
 function ProductModal({ initial, categories, onClose, onSave, onDelete }) {
   const [name, setName] = useState(initial?.name || "");
   const [price, setPrice] = useState(initial?.price || "");
@@ -835,25 +944,17 @@ function ProductModal({ initial, categories, onClose, onSave, onDelete }) {
   const [icon, setIcon] = useState(initial?.icon || "🍰");
   const [image, setImage] = useState(initial?.image || null);
   const [toppings, setToppings] = useState(initial?.toppings || []);
-  const [showToppingForm, setShowToppingForm] = useState(false);
-  const [tName, setTName] = useState("");
-  const [tPrice, setTPrice] = useState("");
-  const [tIcon, setTIcon] = useState(TOPPING_ICONS[0]);
+  const [hiddenToppingIds, setHiddenToppingIds] = useState(initial?.hiddenToppingIds || []);
   const [confirmDelete, setConfirmDelete] = useState(false);
-
-  const addTopping = () => {
-    const p = Number(tPrice);
-    if (!tName.trim() || !p || p <= 0) return;
-    setToppings((prev) => [...prev, { id: uid("top"), name: tName.trim(), price: p, icon: tIcon }]);
-    setTName(""); setTPrice(""); setTIcon(TOPPING_ICONS[0]); setShowToppingForm(false);
-  };
-  const removeTopping = (id) => setToppings((prev) => prev.filter((t) => t.id !== id));
 
   const save = () => {
     const p = Number(price);
     if (!name.trim() || !p || p <= 0) return;
-    onSave({ id: initial?.id || uid("p"), name: name.trim(), price: p, category, icon, image, toppings });
+    onSave({ id: initial?.id || uid("p"), name: name.trim(), price: p, category, icon, image, toppings, hiddenToppingIds });
   };
+
+  const categoryToppings = categories.find((c) => c.name === category)?.toppings || [];
+  const toggleHidden = (id) => setHiddenToppingIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -892,38 +993,28 @@ function ProductModal({ initial, categories, onClose, onSave, onDelete }) {
           </>
         )}
 
-        <label className="field-label">ท็อปปิ้ง (ไม่บังคับ)</label>
-        <div className="topping-list">
-          {toppings.length === 0 && !showToppingForm && (
-            <div className="topping-empty">ยังไม่มีท็อปปิ้ง</div>
-          )}
-          {toppings.map((t) => (
-            <div className="topping-row" key={t.id}>
-              <span className="topping-icon">{t.icon}</span>
-              <span className="topping-name">{t.name}</span>
-              <span className="topping-price">+฿{fmt(t.price)}</span>
-              <button className="topping-remove" onClick={() => removeTopping(t.id)}><X size={14} /></button>
+        {categoryToppings.length > 0 && (
+          <>
+            <label className="field-label">ท็อปปิ้งจากหมวดหมู่ "{category}"</label>
+            <div className="topping-inherit-note">ติ๊กออกได้ถ้าไม่อยากให้สินค้านี้มีท็อปปิ้งอันไหนเป็นพิเศษ</div>
+            <div className="topping-list">
+              {categoryToppings.map((t) => {
+                const hidden = hiddenToppingIds.includes(t.id);
+                return (
+                  <label className="topping-row topping-row-checkable" key={t.id}>
+                    <input type="checkbox" checked={!hidden} onChange={() => toggleHidden(t.id)} />
+                    <span className="topping-icon">{t.icon}</span>
+                    <span className="topping-name">{t.name}</span>
+                    <span className="topping-price">+฿{fmt(t.price)}</span>
+                  </label>
+                );
+              })}
             </div>
-          ))}
-        </div>
-
-        {showToppingForm ? (
-          <div className="topping-form">
-            <div className="topping-icon-grid">
-              {TOPPING_ICONS.map((ic) => (
-                <button key={ic} className={`icon-choice ${tIcon === ic ? "active" : ""}`} onClick={() => setTIcon(ic)}>{ic}</button>
-              ))}
-            </div>
-            <input className="field-input" value={tName} onChange={(e) => setTName(e.target.value)} placeholder="ชื่อท็อปปิ้ง เช่น สตรอเบอร์รี่" />
-            <input className="field-input" type="number" min="0" value={tPrice} onChange={(e) => setTPrice(e.target.value)} placeholder="ราคาเพิ่ม" />
-            <div className="topping-form-actions">
-              <button className="wizard-back-btn" onClick={() => setShowToppingForm(false)}>ยกเลิก</button>
-              <button className="wizard-next-btn" onClick={addTopping}>เพิ่ม</button>
-            </div>
-          </div>
-        ) : (
-          <button className="topping-add-btn" onClick={() => setShowToppingForm(true)}><Plus size={16} /> เพิ่มท็อปปิ้ง</button>
+          </>
         )}
+
+        <label className="field-label">ท็อปปิ้งเพิ่มเติมเฉพาะสินค้านี้ (ไม่บังคับ)</label>
+        <ToppingsEditor toppings={toppings} onChange={setToppings} />
 
         <button className="confirm-btn" onClick={save}>บันทึกสินค้า</button>
         {onDelete && (
@@ -945,9 +1036,17 @@ function ProductModal({ initial, categories, onClose, onSave, onDelete }) {
 }
 
 function ToppingPickerModal({ product, onClose, onConfirm }) {
-  const [selected, setSelected] = useState([]);
-  const toggle = (t) => setSelected((prev) => prev.some((x) => x.id === t.id) ? prev.filter((x) => x.id !== t.id) : [...prev, t]);
-  const total = product.price + selected.reduce((s, t) => s + t.price, 0);
+  const [qtyMap, setQtyMap] = useState({});
+  const changeQty = (t, delta) => {
+    setQtyMap((prev) => {
+      const next = Math.max(0, (prev[t.id] || 0) + delta);
+      return { ...prev, [t.id]: next };
+    });
+  };
+  const selected = product.toppings
+    .map((t) => ({ ...t, qty: qtyMap[t.id] || 0 }))
+    .filter((t) => t.qty > 0);
+  const total = product.price + selected.reduce((s, t) => s + t.price * t.qty, 0);
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -955,16 +1054,23 @@ function ToppingPickerModal({ product, onClose, onConfirm }) {
         <div className="modal-head"><span>{product.name}</span>
           <button className="icon-btn" onClick={onClose}><X size={18} /></button>
         </div>
-        <label className="field-label">เลือกท็อปปิ้ง (เลือกได้หลายอย่าง)</label>
+        <label className="field-label">เลือกท็อปปิ้ง (แตะ + เพื่อเพิ่มจำนวนได้)</label>
         <div className="topping-pick-list">
-          {product.toppings.map((t) => (
-            <label className="topping-pick-row" key={t.id}>
-              <input type="checkbox" checked={selected.some((x) => x.id === t.id)} onChange={() => toggle(t)} />
-              <span className="topping-icon">{t.icon}</span>
-              <span className="topping-name">{t.name}</span>
-              <span className="topping-price">+฿{fmt(t.price)}</span>
-            </label>
-          ))}
+          {product.toppings.map((t) => {
+            const qty = qtyMap[t.id] || 0;
+            return (
+              <div className="topping-pick-row" key={t.id}>
+                <span className="topping-icon">{t.icon}</span>
+                <span className="topping-name">{t.name}</span>
+                <span className="topping-price">+฿{fmt(t.price)}</span>
+                <div className="topping-qty-controls">
+                  <button className="qty-btn" onClick={() => changeQty(t, -1)} disabled={qty === 0}><Minus size={12} /></button>
+                  <span className="qty-val">{qty}</span>
+                  <button className="qty-btn" onClick={() => changeQty(t, 1)}><Plus size={12} /></button>
+                </div>
+              </div>
+            );
+          })}
         </div>
         <div className="topping-total-row"><span>ราคารวม</span><span>฿{fmt(total)}</span></div>
         <button className="confirm-btn" onClick={() => onConfirm(selected)}>เพิ่มลงตะกร้า</button>
@@ -973,7 +1079,7 @@ function ToppingPickerModal({ product, onClose, onConfirm }) {
   );
 }
 
-function HistoryDetailModal({ order, onClose, onDelete }) {
+function HistoryDetailModal({ order, onClose, onDelete, onFinalize }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -989,8 +1095,21 @@ function HistoryDetailModal({ order, onClose, onDelete }) {
         <div className="receipt-row"><span>ยอดรวม</span><span>฿{fmt(order.subtotal)}</span></div>
         <div className="receipt-row"><span>ส่วนลด</span><span>฿{fmt(order.discount)}</span></div>
         <div className="receipt-row total-row"><span>สุทธิ</span><span>฿{fmt(order.total)}</span></div>
-        <div className="receipt-row"><span>ชำระโดย</span><span>{order.paymentMethod === "cash" ? "เงินสด" : "โอนเงิน"}</span></div>
+        <div className="receipt-row"><span>ชำระโดย</span><span>{paymentLabel(order.paymentMethod)}</span></div>
+        {order.paymentMethod === "pending" && (
+          <div className="receipt-row"><span>เบอร์โทรลูกค้า</span><span>📞 {order.customerPhone || "-"}</span></div>
+        )}
         <button className="print-btn" onClick={() => window.print()}><Printer size={16} /> พิมพ์ใบเสร็จ</button>
+
+        {order.paymentMethod === "pending" && onFinalize && (
+          <div className="finalize-block">
+            <div className="finalize-label">ลูกค้าจ่ายแล้ว รับด้วยวิธีไหน?</div>
+            <div className="finalize-actions">
+              <button className="wizard-back-btn finalize-btn" onClick={() => onFinalize("cash")}><Banknote size={14} /> เงินสด</button>
+              <button className="wizard-back-btn finalize-btn" onClick={() => onFinalize("transfer")}><QrCode size={14} /> โอนเงิน</button>
+            </div>
+          </div>
+        )}
 
         {confirmDelete ? (
           <div className="confirm-delete-row">
@@ -1010,9 +1129,10 @@ function HistoryDetailModal({ order, onClose, onDelete }) {
 
 function CategoryModal({ initial, products, onClose, onSave, onDelete }) {
   const [name, setName] = useState(initial?.name || "");
+  const [toppings, setToppings] = useState(initial?.toppings || []);
   const [selected, setSelected] = useState(products.filter((p) => p.category === initial?.name).map((p) => p.id));
   const toggle = (id) => setSelected((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
-  const save = () => { if (!name.trim()) return; onSave({ id: initial.id, name: name.trim() }, selected); };
+  const save = () => { if (!name.trim()) return; onSave({ id: initial.id, name: name.trim(), toppings }, selected); };
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -1022,6 +1142,10 @@ function CategoryModal({ initial, products, onClose, onSave, onDelete }) {
         </div>
         <label className="field-label">ชื่อหมวดหมู่ *</label>
         <input className="field-input" value={name} onChange={(e) => setName(e.target.value)} placeholder="เช่น เค้ก" />
+
+        <label className="field-label">ท็อปปิ้งของหมวดนี้ (ไม่บังคับ)</label>
+        <div className="topping-inherit-note">ถ้าตั้งไว้ที่นี่ สินค้าทุกตัวในหมวดนี้จะมีตัวเลือกท็อปปิ้งชุดเดียวกันหมด</div>
+        <ToppingsEditor toppings={toppings} onChange={setToppings} />
 
         <label className="field-label">เลือกสินค้าในหมวดนี้</label>
         <div className="product-check-list">
@@ -1146,6 +1270,13 @@ const css = `
 .summary-value { font-family:'Prompt'; font-weight:700; font-size:22px; color:var(--ink); }
 .summary-value.small-val { font-size:16px; font-family:'Prompt'; font-weight:700; color:var(--ink); }
 .top-products { background:var(--card); border:none; border-radius:20px; padding:16px 18px; margin-bottom:14px; font-family:'Prompt'; box-shadow: var(--shadow); }
+.pending-card { border:1.5px dashed var(--yellow-deep); }
+.pending-row { width:100%; display:flex; justify-content:space-between; background:none; border:none; border-top:1px solid var(--line); padding:8px 0; cursor:pointer; font-family:'Prompt'; font-size:13px; color:var(--ink); }
+.pending-row:first-of-type { border-top:none; }
+.finalize-block { margin-top:12px; background:var(--yellow); border-radius:14px; padding:12px; }
+.finalize-label { font-size:12.5px; color:var(--ink); font-family:'Prompt'; margin-bottom:8px; text-align:center; }
+.finalize-actions { display:flex; gap:8px; }
+.finalize-btn { flex:1; display:flex; align-items:center; justify-content:center; gap:6px; background:white; }
 .top-title { display:flex; align-items:center; gap:6px; font-weight:600; margin-bottom:8px; font-size:13.5px; }
 .top-row { display:flex; justify-content:space-between; font-size:13px; padding:4px 0; color:var(--ink-soft); }
 .history-list { display:flex; flex-direction:column; gap:10px; }
@@ -1171,19 +1302,26 @@ const css = `
 
 .topping-list { margin-top:6px; }
 .topping-empty { color:var(--ink-soft); font-size:12.5px; padding:6px 0; }
-.topping-row { display:flex; align-items:center; gap:8px; background:var(--card); border-radius:12px; padding:8px 12px; margin-bottom:6px; box-shadow: var(--shadow); }
+.topping-row { display:flex; align-items:center; gap:8px; background:var(--card); border-radius:12px; padding:4px 6px 4px 12px; margin-bottom:6px; box-shadow: var(--shadow); }
+.topping-edit-area { flex:1; display:flex; align-items:center; gap:8px; background:none; border:none; padding:6px 4px; cursor:pointer; text-align:left; }
 .topping-icon { font-size:16px; }
 .topping-name { flex:1; font-size:13.5px; font-weight:500; }
 .topping-price { font-size:13px; color:var(--peach-deep); font-weight:600; }
-.topping-remove { background:none; border:none; color:var(--ink-soft); cursor:pointer; display:flex; }
+.topping-remove { background:none; border:none; color:var(--ink-soft); cursor:pointer; display:flex; padding:8px; }
 .topping-add-btn { width:100%; margin-top:6px; background:var(--card); border:1.5px dashed var(--line); color:var(--peach-deep); border-radius:12px; padding:10px; font-family:'Prompt'; font-size:13.5px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px; }
 .topping-form { background:var(--card); border-radius:14px; padding:12px; margin-top:6px; box-shadow: var(--shadow); }
 .topping-icon-grid { display:grid; grid-template-columns:repeat(7, 1fr); gap:6px; margin-bottom:8px; }
 .topping-form input { margin-bottom:8px; }
 .topping-form-actions { display:flex; gap:8px; }
-.topping-pick-list { max-height:260px; overflow-y:auto; margin-top:6px; }
+.topping-pick-list { max-height:320px; overflow-y:auto; margin-top:6px; }
 .topping-pick-row { display:flex; align-items:center; gap:10px; background:var(--card); border-radius:12px; padding:10px 12px; margin-bottom:6px; box-shadow: var(--shadow); font-family:'Prompt'; }
+.topping-qty-controls { display:flex; align-items:center; gap:8px; }
+.topping-qty-controls .qty-btn:disabled { opacity:0.3; cursor:not-allowed; }
 .topping-total-row { display:flex; justify-content:space-between; font-weight:700; font-size:16px; margin-top:14px; color:var(--peach-deep); }
+.topping-inherit-note { font-size:12px; color:var(--ink-soft); background:var(--yellow); border-radius:10px; padding:8px 12px; margin:4px 0 8px; font-family:'Prompt'; }
+.topping-row-checkable { cursor:pointer; font-family:'Prompt'; }
+.topping-row-checkable input[type="checkbox"] { flex-shrink:0; }
+
 .icon-choice { border:1.5px solid var(--line); background:var(--card); border-radius:10px; padding:6px 0; font-size:17px; cursor:pointer; }
 .icon-choice.active { border-color:var(--yellow-deep); background:var(--yellow); }
 .confirm-btn { width:100%; margin-top:18px; background:var(--yellow-deep); color:var(--ink); border:none; border-radius:999px; padding:13px; font-family:'Prompt'; font-weight:600; font-size:14.5px; cursor:pointer; }
@@ -1197,12 +1335,13 @@ const css = `
 
 .pay-modal { max-width:340px; }
 .pay-total { font-family:'Prompt'; font-weight:700; font-size:32px; text-align:center; color:var(--ink); margin-bottom:16px; }
-.method-toggle { display:flex; gap:8px; margin-bottom:8px; }
-.method-btn { flex:1; display:flex; align-items:center; justify-content:center; gap:6px; border:none; background:var(--card); border-radius:14px; padding:11px; cursor:pointer; font-family:'Prompt'; font-weight:500; font-size:13px; color:var(--ink-soft); }
+.method-toggle { display:flex; gap:8px; margin-bottom:8px; flex-wrap:wrap; }
+.method-btn { flex:1; min-width:88px; display:flex; align-items:center; justify-content:center; gap:6px; border:none; background:var(--card); border-radius:14px; padding:11px; cursor:pointer; font-family:'Prompt'; font-weight:500; font-size:12.5px; color:var(--ink-soft); }
 .method-btn.active { background:var(--yellow); color:var(--ink); font-weight:600; }
 .change-row { display:flex; justify-content:space-between; align-items:center; margin-top:14px; font-family:'Prompt'; font-size:14px; font-weight:600; }
 .change-value { color:var(--green-deep); font-size:19px; }
 .change-negative { color:var(--peach-deep); font-size:19px; }
+.pending-note { font-size:12px; color:var(--ink-soft); background:var(--yellow); border-radius:10px; padding:8px 12px; margin-top:10px; font-family:'Prompt'; }
 
 .qr-pay-block { display:flex; flex-direction:column; align-items:center; margin-top:10px; padding:16px; background:var(--card); border-radius:20px; }
 .qr-pay-block img { width:180px; height:180px; border-radius:12px; }
@@ -1213,6 +1352,7 @@ const css = `
 
 .stamp-screen { display:flex; flex-direction:column; align-items:center; padding:14px 0 4px; }
 .stamp-badge { width:64px; height:64px; border-radius:50%; background:var(--green-deep); color:white; display:flex; align-items:center; justify-content:center; margin-bottom:14px; animation:stampIn .35s cubic-bezier(.2,1.4,.4,1); }
+.stamp-badge.pending { background:var(--yellow-deep); }
 .stamp { font-family:'Prompt'; font-weight:600; font-size:16px; color:var(--ink); margin-bottom:10px; }
 @keyframes stampIn { 0%{transform:scale(0.4); opacity:0;} 100%{transform:scale(1); opacity:1;} }
 .stamp-order-total { font-family:'Prompt'; font-size:26px; font-weight:700; margin-bottom:4px; color:var(--ink); }
