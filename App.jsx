@@ -326,13 +326,16 @@ export default function BakeryPOS() {
       const idx = scoped.findIndex((p) => p.id === id);
       const swapIdx = idx + direction;
       if (idx === -1 || swapIdx < 0 || swapIdx >= scoped.length) return prev;
-      const a = scoped[idx], b = scoped[swapIdx];
-      const orderA = a.order ?? 0, orderB = b.order ?? 0;
-      return prev.map((p) => {
-        if (p.id === a.id) return { ...p, order: orderB };
-        if (p.id === b.id) return { ...p, order: orderA };
-        return p;
-      });
+      const reordered = scoped.slice();
+      const tmp = reordered[idx];
+      reordered[idx] = reordered[swapIdx];
+      reordered[swapIdx] = tmp;
+      // Reassign clean, guaranteed-unique sequential order values (0,1,2,...) within this
+      // category every time - this self-heals any duplicate/corrupted order values that
+      // may have been left behind by earlier bugs, instead of just swapping the old numbers.
+      const idToNewOrder = {};
+      reordered.forEach((p, i) => { idToNewOrder[p.id] = i; });
+      return prev.map((p) => (idToNewOrder[p.id] !== undefined ? { ...p, order: idToNewOrder[p.id] } : p));
     });
   };
 
