@@ -194,7 +194,7 @@ export default function BakeryPOS() {
   const [wizardStep, setWizardStep] = useState(1);
 
   const [view, setView] = useState("pos");
-  const [activeCategory, setActiveCategory] = useState("ทั้งหมด");
+  const [activeCategory, setActiveCategory] = useState("");
   const [cart, setCart] = useState([]);
   const [discount, setDiscount] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState("cash");
@@ -219,7 +219,8 @@ export default function BakeryPOS() {
     (async () => {
       try { await import("./storage"); } catch (e) { /* no storage.js in this environment - keep default window.storage */ }
       const s = await loadKey("bakery-shop", { name: "", image: null, promptpayId: "", setupDone: false });
-      const p = await loadKey("bakery-products", []);
+      const pRaw = await loadKey("bakery-products", []);
+      const p = pRaw.map((prod, i) => (typeof prod.order === "number" ? prod : { ...prod, order: i }));
       const c = await loadKey("bakery-categories", []);
       const o = await loadKey("bakery-orders", []);
       setShop(s); setProducts(p); setCategories(c); setOrders(o);
@@ -319,7 +320,6 @@ export default function BakeryPOS() {
     if (draggedId === targetId) return;
     setProducts((prev) => {
       const scopeFilter = (p) => {
-        if (activeCategory === "ทั้งหมด") return true;
         if (activeCategory === "ไม่ระบุหมวด") return !p.category;
         return p.category === activeCategory;
       };
@@ -392,15 +392,29 @@ export default function BakeryPOS() {
   };
 
   const hasUncategorized = products.some((p) => !p.category);
-  const posTabs = ["ทั้งหมด", ...categories.map((c) => c.name), ...(hasUncategorized ? ["ไม่ระบุหมวด"] : [])];
+  const pinnedFirstCategory = "เค้กหน้าร้าน";
+  const sortedCategoryNames = categories
+    .map((c) => c.name)
+    .slice()
+    .sort((a, b) => {
+      if (a === pinnedFirstCategory) return -1;
+      if (b === pinnedFirstCategory) return 1;
+      return 0;
+    });
+  const posTabs = [...sortedCategoryNames, ...(hasUncategorized ? ["ไม่ระบุหมวด"] : [])];
   const visibleProducts = products
     .filter((p) => {
-      if (activeCategory === "ทั้งหมด") return true;
       if (activeCategory === "ไม่ระบุหมวด") return !p.category;
       return p.category === activeCategory;
     })
     .slice()
     .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+
+  useEffect(() => {
+    if (posTabs.length > 0 && !posTabs.includes(activeCategory)) {
+      setActiveCategory(posTabs[0]);
+    }
+  }, [posTabs.join("|")]);
 
   const dayOrders = orders.filter((o) => o.time.slice(0, 10) === selectedDate);
   const paidDayOrders = dayOrders.filter((o) => o.paymentMethod !== "pending");
@@ -1616,3 +1630,4 @@ const css = `
   .receipt-pane { max-width:100%; }
 }
 `;
+
