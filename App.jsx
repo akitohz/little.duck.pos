@@ -347,10 +347,12 @@ export default function BakeryPOS() {
 
   useEffect(() => {
     if (!dragActiveId) return;
+    const getPoint = (e) => (e.touches && e.touches[0] ? e.touches[0] : e);
     const handleMove = (e) => {
       if (e.cancelable) e.preventDefault();
-      setDragPos({ x: e.clientX, y: e.clientY });
-      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const pt = getPoint(e);
+      setDragPos({ x: pt.clientX, y: pt.clientY });
+      const el = document.elementFromPoint(pt.clientX, pt.clientY);
       const card = el && el.closest && el.closest("[data-product-card]");
       if (card) {
         const cid = card.getAttribute("data-product-card");
@@ -367,13 +369,17 @@ export default function BakeryPOS() {
       setDragActiveId(null);
       setDragOverId(null);
     };
-    window.addEventListener("pointermove", handleMove, { passive: false });
-    window.addEventListener("pointerup", handleEnd);
-    window.addEventListener("pointercancel", handleEnd);
+    window.addEventListener("touchmove", handleMove, { passive: false });
+    window.addEventListener("touchend", handleEnd);
+    window.addEventListener("touchcancel", handleEnd);
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleEnd);
     return () => {
-      window.removeEventListener("pointermove", handleMove);
-      window.removeEventListener("pointerup", handleEnd);
-      window.removeEventListener("pointercancel", handleEnd);
+      window.removeEventListener("touchmove", handleMove);
+      window.removeEventListener("touchend", handleEnd);
+      window.removeEventListener("touchcancel", handleEnd);
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleEnd);
     };
   }, [dragActiveId]);
 
@@ -510,9 +516,13 @@ export default function BakeryPOS() {
                   <button
                     className="tag-drag-handle"
                     onClick={(e) => e.stopPropagation()}
-                    onPointerDown={(e) => {
+                    onTouchStart={(e) => {
                       e.stopPropagation();
-                      try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+                      const t = e.touches[0];
+                      startDrag(p.id, t.clientX, t.clientY);
+                    }}
+                    onMouseDown={(e) => {
+                      e.stopPropagation();
                       startDrag(p.id, e.clientX, e.clientY);
                     }}
                   >
