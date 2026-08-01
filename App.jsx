@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import {
   Plus, Minus, Trash2, History, X, Banknote, ArrowLeftRight, ArrowLeft,
   Camera, Check, Settings, Package, FolderOpen, QrCode, ChevronRight, ArrowUpDown, ChevronUp, ChevronDown,
-  TrendingUp, Calendar, Store, ArrowRight, Printer, Edit2, Clock
+  TrendingUp, Calendar, Store, ArrowRight, Printer, Clock
 } from "lucide-react";
 
 const PALETTE = ["#BFE3F0", "#C9EFCB", "#FCE9B0", "#F3D3C7"];
@@ -210,7 +210,7 @@ export default function BakeryPOS() {
   const [showAddCategory, setShowAddCategory] = useState(false);
   const [editingCategory, setEditingCategory] = useState(null);
   const [showToppingPicker, setShowToppingPicker] = useState(null);
-  const [showReorderModal, setShowReorderModal] = useState(false);
+  const [reorderCategory, setReorderCategory] = useState(null);
 
   useEffect(() => {
     (async () => {
@@ -316,11 +316,11 @@ export default function BakeryPOS() {
 
   // Simple, reliable reorder: move one step up/down within the current category's list.
   // Plain button taps only - no drag physics involved, so it works identically on every device.
-  const moveProductStep = (id, direction) => {
+  const moveProductStep = (id, direction, categoryScope) => {
     setProducts((prev) => {
       const scopeFilter = (p) => {
-        if (activeCategory === "ไม่ระบุหมวด") return !p.category;
-        return p.category === activeCategory;
+        if (categoryScope === "ไม่ระบุหมวด") return !p.category;
+        return p.category === categoryScope;
       };
       const scoped = prev.filter(scopeFilter).slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
       const idx = scoped.findIndex((p) => p.id === id);
@@ -409,6 +409,7 @@ export default function BakeryPOS() {
           <StepCategories categories={categories} products={products}
             onAdd={() => { setEditingCategory({ id: uid("cat"), name: "" }); setShowAddCategory(true); }}
             onEdit={(c) => { setEditingCategory(c); setShowAddCategory(true); }}
+            onReorder={(name) => setReorderCategory(name)}
             onBack={() => setWizardStep(2)} onNext={() => setWizardStep(4)} onSkip={() => setWizardStep(4)} />
         )}
         {wizardStep === 4 && (
@@ -426,6 +427,17 @@ export default function BakeryPOS() {
             onDelete={categories.find((c) => c.id === editingCategory?.id) ? () => { deleteCategory(editingCategory); setShowAddCategory(false); } : null}
             onClose={() => setShowAddCategory(false)}
             onSave={(cat, ids) => { saveCategory(cat, ids); setShowAddCategory(false); }} />
+        )}
+        {reorderCategory && (
+          <ReorderModal
+            products={products
+              .filter((p) => (reorderCategory === "ไม่ระบุหมวด" ? !p.category : p.category === reorderCategory))
+              .slice()
+              .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))}
+            categoryLabel={reorderCategory}
+            onMove={(id, direction) => moveProductStep(id, direction, reorderCategory)}
+            onClose={() => setReorderCategory(null)}
+          />
         )}
       </div>
     );
@@ -451,7 +463,6 @@ export default function BakeryPOS() {
               {posTabs.map((c) => (
                 <button key={c} className={`cat-tab ${activeCategory === c ? "active" : ""}`} onClick={() => setActiveCategory(c)}>{c}</button>
               ))}
-              <button className="cat-tab add-tab" onClick={() => setShowReorderModal(true)}><ArrowUpDown size={14} /> จัดลำดับ</button>
               <button className="cat-tab add-tab" onClick={() => setShowAddProduct(true)}><Plus size={14} /> เพิ่มสินค้า</button>
             </div>
             <div className="product-grid">
@@ -464,9 +475,6 @@ export default function BakeryPOS() {
                   role="button"
                   tabIndex={0}
                 >
-                  <button className="tag-edit-btn" onClick={(e) => { e.stopPropagation(); setShowAddProduct(p); }}>
-                    <Edit2 size={13} />
-                  </button>
                   <div className="tag-media" style={{ background: PALETTE[idx % PALETTE.length] }}>
                     {p.image ? <img src={p.image} alt={p.name} /> : <span className="tag-icon">{p.icon || "🍰"}</span>}
                   </div>
@@ -681,15 +689,6 @@ export default function BakeryPOS() {
         />
       )}
 
-      {showReorderModal && (
-        <ReorderModal
-          products={visibleProducts}
-          categoryLabel={activeCategory}
-          onMove={moveProductStep}
-          onClose={() => setShowReorderModal(false)}
-        />
-      )}
-
       <ReceiptPrintable shop={shop} order={paidStamp ? lastOrder : historyDetail} />
     </div>
   );
@@ -827,7 +826,7 @@ function StepProducts({ products, onAdd, onEdit, onBack, onNext }) {
   );
 }
 
-function StepCategories({ categories, products, onAdd, onEdit, onBack, onNext, onSkip }) {
+function StepCategories({ categories, products, onAdd, onEdit, onReorder, onBack, onNext, onSkip }) {
   const allDone = products.length > 0 && products.every((p) => p.category);
   return (
     <div className="wizard-body">
@@ -844,12 +843,17 @@ function StepCategories({ categories, products, onAdd, onEdit, onBack, onNext, o
         {categories.map((c) => {
           const count = products.filter((p) => p.category === c.name).length;
           return (
-            <button className="wizard-list-row" key={c.id} onClick={() => onEdit(c)}>
+            <div className="wizard-list-row" key={c.id} onClick={() => onEdit(c)} role="button" tabIndex={0}>
               <div className="wlr-thumb icon-only"><FolderOpen size={18} /></div>
               <div className="wlr-info"><div className="wlr-name">{c.name}</div></div>
               <span className="wlr-count">{count} สินค้า</span>
+              {count > 1 && (
+                <button className="wlr-reorder-btn" onClick={(e) => { e.stopPropagation(); onReorder(c.name); }}>
+                  <ArrowUpDown size={14} /> จัดลำดับ
+                </button>
+              )}
               <ChevronRight size={18} />
-            </button>
+            </div>
           );
         })}
       </div>
@@ -1492,8 +1496,6 @@ const css = `
 .confirm-btn { width:100%; margin-top:18px; background:var(--yellow-deep); color:var(--ink); border:none; border-radius:999px; padding:13px; font-family:'Prompt'; font-weight:600; font-size:14.5px; cursor:pointer; }
 .confirm-btn:disabled { opacity:0.4; cursor:not-allowed; }
 .delete-btn { width:100%; margin-top:10px; background:none; border:1px solid var(--line); color:var(--peach-deep); border-radius:999px; padding:10px; font-family:'Prompt'; font-size:13.5px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px; }
-.tag-edit-btn { position:absolute; top:8px; right:8px; width:26px; height:26px; border-radius:50%; background:rgba(255,255,255,0.9); border:none; display:flex; align-items:center; justify-content:center; color:var(--ink-soft); box-shadow: var(--shadow); cursor:pointer; z-index:2; }
-.tag-edit-btn:hover { color:var(--yellow-deep); }
 .reorder-scope-note { font-size:12px; color:var(--ink-soft); margin-bottom:10px; font-family:'Prompt'; }
 .reorder-list { max-height:420px; overflow-y:auto; }
 .reorder-row { display:flex; align-items:center; gap:10px; background:var(--card); border-radius:14px; padding:8px 10px; margin-bottom:8px; box-shadow: var(--shadow); }
@@ -1570,6 +1572,7 @@ const css = `
 .wlr-name { font-weight:600; font-size:14.5px; }
 .wlr-sub { font-size:12px; color:var(--ink-soft); }
 .wlr-count { font-size:12px; color:var(--ink-soft); }
+.wlr-reorder-btn { display:flex; align-items:center; gap:4px; background:var(--yellow); color:var(--ink); border:none; border-radius:999px; padding:6px 10px; font-family:'Prompt'; font-size:11.5px; font-weight:600; cursor:pointer; white-space:nowrap; }
 
 .all-done-note { text-align:center; color:var(--green-deep); font-family:'Prompt'; font-weight:500; font-size:13.5px; margin-bottom:14px; }
 
