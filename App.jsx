@@ -337,9 +337,11 @@ export default function BakeryPOS() {
     });
   };
 
-  const startDrag = (id) => {
+  const [dragPos, setDragPos] = useState({ x: 0, y: 0 });
+  const startDrag = (id, x, y) => {
     draggingIdRef.current = id;
     dragOverIdRef.current = id;
+    setDragPos({ x, y });
     setDragActiveId(id);
   };
 
@@ -347,6 +349,7 @@ export default function BakeryPOS() {
     if (!dragActiveId) return;
     const handleMove = (e) => {
       if (e.cancelable) e.preventDefault();
+      setDragPos({ x: e.clientX, y: e.clientY });
       const el = document.elementFromPoint(e.clientX, e.clientY);
       const card = el && el.closest && el.closest("[data-product-card]");
       if (card) {
@@ -373,6 +376,8 @@ export default function BakeryPOS() {
       window.removeEventListener("pointercancel", handleEnd);
     };
   }, [dragActiveId]);
+
+  const draggedProduct = dragActiveId ? products.find((p) => p.id === dragActiveId) : null;
 
   const saveCategory = (cat, productIds) => {
     setCategories((prev) => {
@@ -508,7 +513,7 @@ export default function BakeryPOS() {
                     onPointerDown={(e) => {
                       e.stopPropagation();
                       try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
-                      startDrag(p.id);
+                      startDrag(p.id, e.clientX, e.clientY);
                     }}
                   >
                     <GripVertical size={14} />
@@ -725,6 +730,13 @@ export default function BakeryPOS() {
           onDelete={() => { deleteOrder(historyDetail.id); setHistoryDetail(null); }}
           onFinalize={(method) => { finalizePendingOrder(historyDetail.id, method); setHistoryDetail(null); }}
         />
+      )}
+
+      {dragActiveId && draggedProduct && (
+        <div className="drag-ghost" style={{ left: dragPos.x, top: dragPos.y }}>
+          {draggedProduct.image ? <img src={draggedProduct.image} alt="" /> : <span className="drag-ghost-icon">{draggedProduct.icon || "🍰"}</span>}
+          <span>{draggedProduct.name}</span>
+        </div>
       )}
 
       <ReceiptPrintable shop={shop} order={paidStamp ? lastOrder : historyDetail} />
@@ -1505,6 +1517,14 @@ const css = `
 .tag-drag-handle:active { cursor:grabbing; }
 .price-tag-card.dragging { opacity:0.45; box-shadow:none; }
 .price-tag-card.drag-over { outline:2px dashed var(--yellow-deep); outline-offset:2px; }
+.drag-ghost {
+  position:fixed; pointer-events:none; transform:translate(-50%, -120%);
+  background:white; border-radius:14px; padding:8px 14px; box-shadow:0 12px 32px rgba(43,45,66,0.28);
+  display:flex; align-items:center; gap:8px; font-family:'Prompt'; font-weight:600; font-size:13px;
+  color:var(--ink); z-index:999; max-width:220px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.drag-ghost img { width:28px; height:28px; border-radius:8px; object-fit:cover; flex-shrink:0; }
+.drag-ghost-icon { font-size:20px; }
 .confirm-delete-row { margin-top:10px; background:#FDEEEE; border-radius:14px; padding:12px; text-align:center; font-family:'Prompt'; font-size:13px; color:#B23B3B; }
 .confirm-delete-actions { display:flex; gap:8px; margin-top:10px; }
 .delete-btn-confirm { flex:1; background:#D64545; color:white; border:none; border-radius:999px; padding:10px; font-family:'Prompt'; font-weight:600; font-size:13.5px; cursor:pointer; }
@@ -1630,4 +1650,3 @@ const css = `
   .receipt-pane { max-width:100%; }
 }
 `;
-
