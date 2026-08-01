@@ -491,7 +491,11 @@ export default function BakeryPOS() {
                   <button
                     className="tag-drag-handle"
                     onClick={(e) => e.stopPropagation()}
-                    onPointerDown={(e) => { e.stopPropagation(); startDrag(p.id); }}
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+                      startDrag(p.id);
+                    }}
                   >
                     <GripVertical size={14} />
                   </button>
