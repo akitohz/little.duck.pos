@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import {
   Plus, Minus, Trash2, History, X, Banknote, ArrowLeftRight, ArrowLeft,
-  Camera, Check, Settings, Package, FolderOpen, QrCode, ChevronRight, GripVertical,
+  Camera, Check, Settings, Package, FolderOpen, QrCode, ChevronRight, ArrowUpDown, ChevronUp, ChevronDown,
   TrendingUp, Calendar, Store, ArrowRight, Printer, Edit2, Clock
 } from "lucide-react";
 
@@ -210,10 +210,7 @@ export default function BakeryPOS() {
   const [showAddCategory, setShowAddCategory] = useState(false);
   const [editingCategory, setEditingCategory] = useState(null);
   const [showToppingPicker, setShowToppingPicker] = useState(null);
-  const [dragActiveId, setDragActiveId] = useState(null);
-  const [dragOverId, setDragOverId] = useState(null);
-  const draggingIdRef = useRef(null);
-  const dragOverIdRef = useRef(null);
+  const [showReorderModal, setShowReorderModal] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -316,88 +313,28 @@ export default function BakeryPOS() {
   };
   const deleteProduct = (id) => setProducts((prev) => prev.filter((p) => p.id !== id));
   const deleteOrder = (id) => setOrders((prev) => prev.filter((o) => o.id !== id));
-  const reorderProducts = (draggedId, targetId) => {
-    if (draggedId === targetId) return;
+
+  // Simple, reliable reorder: move one step up/down within the current category's list.
+  // Plain button taps only - no drag physics involved, so it works identically on every device.
+  const moveProductStep = (id, direction) => {
     setProducts((prev) => {
       const scopeFilter = (p) => {
         if (activeCategory === "ไม่ระบุหมวด") return !p.category;
         return p.category === activeCategory;
       };
       const scoped = prev.filter(scopeFilter).slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-      const orderSlots = scoped.map((p) => p.order ?? 0);
-      const fromIdx = scoped.findIndex((p) => p.id === draggedId);
-      const toIdx = scoped.findIndex((p) => p.id === targetId);
-      if (fromIdx === -1 || toIdx === -1) return prev;
-      const reordered = scoped.slice();
-      const [moved] = reordered.splice(fromIdx, 1);
-      reordered.splice(toIdx, 0, moved);
-      const idToNewOrder = {};
-      reordered.forEach((p, i) => { idToNewOrder[p.id] = orderSlots[i]; });
-      return prev.map((p) => (idToNewOrder[p.id] !== undefined ? { ...p, order: idToNewOrder[p.id] } : p));
+      const idx = scoped.findIndex((p) => p.id === id);
+      const swapIdx = idx + direction;
+      if (idx === -1 || swapIdx < 0 || swapIdx >= scoped.length) return prev;
+      const a = scoped[idx], b = scoped[swapIdx];
+      const orderA = a.order ?? 0, orderB = b.order ?? 0;
+      return prev.map((p) => {
+        if (p.id === a.id) return { ...p, order: orderB };
+        if (p.id === b.id) return { ...p, order: orderA };
+        return p;
+      });
     });
   };
-
-  const [dragPos, setDragPos] = useState({ x: 0, y: 0 });
-  const startDrag = (id, x, y) => {
-    draggingIdRef.current = id;
-    dragOverIdRef.current = id;
-    setDragPos({ x, y });
-    setDragActiveId(id);
-  };
-
-  useEffect(() => {
-    if (!dragActiveId) return;
-    const getPoint = (e) => (e.touches && e.touches[0] ? e.touches[0] : e);
-    const findNearestCard = (x, y) => {
-      const cards = document.querySelectorAll("[data-product-card]");
-      let closestId = null;
-      let minDist = Infinity;
-      cards.forEach((el) => {
-        const rect = el.getBoundingClientRect();
-        const cx = rect.left + rect.width / 2;
-        const cy = rect.top + rect.height / 2;
-        const dist = (cx - x) * (cx - x) + (cy - y) * (cy - y);
-        if (dist < minDist) {
-          minDist = dist;
-          closestId = el.getAttribute("data-product-card");
-        }
-      });
-      return closestId;
-    };
-    const handleMove = (e) => {
-      if (e.cancelable) e.preventDefault();
-      const pt = getPoint(e);
-      setDragPos({ x: pt.clientX, y: pt.clientY });
-      const cid = findNearestCard(pt.clientX, pt.clientY);
-      if (cid) {
-        dragOverIdRef.current = cid;
-        setDragOverId((prev) => (prev === cid ? prev : cid));
-      }
-    };
-    const handleEnd = () => {
-      const from = draggingIdRef.current;
-      const to = dragOverIdRef.current;
-      if (from && to && from !== to) reorderProducts(from, to);
-      draggingIdRef.current = null;
-      dragOverIdRef.current = null;
-      setDragActiveId(null);
-      setDragOverId(null);
-    };
-    window.addEventListener("touchmove", handleMove, { passive: false });
-    window.addEventListener("touchend", handleEnd);
-    window.addEventListener("touchcancel", handleEnd);
-    window.addEventListener("mousemove", handleMove);
-    window.addEventListener("mouseup", handleEnd);
-    return () => {
-      window.removeEventListener("touchmove", handleMove);
-      window.removeEventListener("touchend", handleEnd);
-      window.removeEventListener("touchcancel", handleEnd);
-      window.removeEventListener("mousemove", handleMove);
-      window.removeEventListener("mouseup", handleEnd);
-    };
-  }, [dragActiveId]);
-
-  const draggedProduct = dragActiveId ? products.find((p) => p.id === dragActiveId) : null;
 
   const saveCategory = (cat, productIds) => {
     setCategories((prev) => {
@@ -511,36 +448,21 @@ export default function BakeryPOS() {
               {posTabs.map((c) => (
                 <button key={c} className={`cat-tab ${activeCategory === c ? "active" : ""}`} onClick={() => setActiveCategory(c)}>{c}</button>
               ))}
+              <button className="cat-tab add-tab" onClick={() => setShowReorderModal(true)}><ArrowUpDown size={14} /> จัดลำดับ</button>
               <button className="cat-tab add-tab" onClick={() => setShowAddProduct(true)}><Plus size={14} /> เพิ่มสินค้า</button>
             </div>
             <div className="product-grid">
               {visibleProducts.length === 0 && <div className="empty-note">ยังไม่มีสินค้าในหมวดนี้</div>}
               {visibleProducts.map((p, idx) => (
                 <div
-                  className={`price-tag-card ${dragActiveId === p.id ? "dragging" : ""} ${dragOverId === p.id && dragActiveId && dragActiveId !== p.id ? "drag-over" : ""}`}
+                  className="price-tag-card"
                   key={p.id}
-                  data-product-card={p.id}
                   onClick={() => selectProduct(p)}
                   role="button"
                   tabIndex={0}
                 >
                   <button className="tag-edit-btn" onClick={(e) => { e.stopPropagation(); setShowAddProduct(p); }}>
                     <Edit2 size={13} />
-                  </button>
-                  <button
-                    className="tag-drag-handle"
-                    onClick={(e) => e.stopPropagation()}
-                    onTouchStart={(e) => {
-                      e.stopPropagation();
-                      const t = e.touches[0];
-                      startDrag(p.id, t.clientX, t.clientY);
-                    }}
-                    onMouseDown={(e) => {
-                      e.stopPropagation();
-                      startDrag(p.id, e.clientX, e.clientY);
-                    }}
-                  >
-                    <GripVertical size={14} />
                   </button>
                   <div className="tag-media" style={{ background: PALETTE[idx % PALETTE.length] }}>
                     {p.image ? <img src={p.image} alt={p.name} /> : <span className="tag-icon">{p.icon || "🍰"}</span>}
@@ -756,11 +678,13 @@ export default function BakeryPOS() {
         />
       )}
 
-      {dragActiveId && draggedProduct && (
-        <div className="drag-ghost" style={{ left: dragPos.x, top: dragPos.y }}>
-          {draggedProduct.image ? <img src={draggedProduct.image} alt="" /> : <span className="drag-ghost-icon">{draggedProduct.icon || "🍰"}</span>}
-          <span>{draggedProduct.name}</span>
-        </div>
+      {showReorderModal && (
+        <ReorderModal
+          products={visibleProducts}
+          categoryLabel={activeCategory}
+          onMove={moveProductStep}
+          onClose={() => setShowReorderModal(false)}
+        />
       )}
 
       <ReceiptPrintable shop={shop} order={paidStamp ? lastOrder : historyDetail} />
@@ -1269,6 +1193,36 @@ function ToppingPickerModal({ product, onClose, onConfirm }) {
   );
 }
 
+function ReorderModal({ products, categoryLabel, onMove, onClose }) {
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head"><span>จัดลำดับสินค้า</span>
+          <button className="icon-btn" onClick={onClose}><X size={18} /></button>
+        </div>
+        <div className="reorder-scope-note">หมวด "{categoryLabel}" — กดลูกศรเพื่อเลื่อนขึ้น/ลง</div>
+        <div className="reorder-list">
+          {products.length === 0 && <div className="empty-note small">ยังไม่มีสินค้าในหมวดนี้</div>}
+          {products.map((p, idx) => (
+            <div className="reorder-row" key={p.id}>
+              <div className="reorder-thumb">{p.image ? <img src={p.image} alt="" /> : <span>{p.icon || "🍰"}</span>}</div>
+              <div className="reorder-info">
+                <div className="reorder-name">{p.name}</div>
+                <div className="reorder-price">฿{fmt(p.price)}</div>
+              </div>
+              <div className="reorder-arrows">
+                <button className="reorder-arrow-btn" disabled={idx === 0} onClick={() => onMove(p.id, -1)}><ChevronUp size={16} /></button>
+                <button className="reorder-arrow-btn" disabled={idx === products.length - 1} onClick={() => onMove(p.id, 1)}><ChevronDown size={16} /></button>
+              </div>
+            </div>
+          ))}
+        </div>
+        <button className="confirm-btn" onClick={onClose}>เสร็จสิ้น</button>
+      </div>
+    </div>
+  );
+}
+
 function HistoryDetailModal({ order, onClose, onDelete, onFinalize }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   return (
@@ -1537,18 +1491,17 @@ const css = `
 .delete-btn { width:100%; margin-top:10px; background:none; border:1px solid var(--line); color:var(--peach-deep); border-radius:999px; padding:10px; font-family:'Prompt'; font-size:13.5px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px; }
 .tag-edit-btn { position:absolute; top:8px; right:8px; width:26px; height:26px; border-radius:50%; background:rgba(255,255,255,0.9); border:none; display:flex; align-items:center; justify-content:center; color:var(--ink-soft); box-shadow: var(--shadow); cursor:pointer; z-index:2; }
 .tag-edit-btn:hover { color:var(--yellow-deep); }
-.tag-drag-handle { position:absolute; top:8px; left:8px; width:24px; height:24px; border-radius:50%; background:rgba(255,255,255,0.9); border:none; display:flex; align-items:center; justify-content:center; color:var(--ink-soft); box-shadow: var(--shadow); cursor:grab; z-index:2; touch-action:none; }
-.tag-drag-handle:active { cursor:grabbing; }
-.price-tag-card.dragging { opacity:0.45; box-shadow:none; }
-.price-tag-card.drag-over { outline:2px dashed var(--yellow-deep); outline-offset:2px; }
-.drag-ghost {
-  position:fixed; pointer-events:none; transform:translate(-50%, -120%);
-  background:white; border-radius:14px; padding:8px 14px; box-shadow:0 12px 32px rgba(43,45,66,0.28);
-  display:flex; align-items:center; gap:8px; font-family:'Prompt'; font-weight:600; font-size:13px;
-  color:var(--ink); z-index:999; max-width:220px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
-}
-.drag-ghost img { width:28px; height:28px; border-radius:8px; object-fit:cover; flex-shrink:0; }
-.drag-ghost-icon { font-size:20px; }
+.reorder-scope-note { font-size:12px; color:var(--ink-soft); margin-bottom:10px; font-family:'Prompt'; }
+.reorder-list { max-height:420px; overflow-y:auto; }
+.reorder-row { display:flex; align-items:center; gap:10px; background:var(--card); border-radius:14px; padding:8px 10px; margin-bottom:8px; box-shadow: var(--shadow); }
+.reorder-thumb { width:42px; height:42px; border-radius:10px; overflow:hidden; display:flex; align-items:center; justify-content:center; background:var(--bg); font-size:19px; flex-shrink:0; }
+.reorder-thumb img { width:100%; height:100%; object-fit:cover; }
+.reorder-info { flex:1; min-width:0; }
+.reorder-name { font-weight:600; font-size:13.5px; font-family:'Prompt'; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.reorder-price { font-size:12px; color:var(--peach-deep); font-weight:600; }
+.reorder-arrows { display:flex; flex-direction:column; gap:4px; }
+.reorder-arrow-btn { width:30px; height:26px; border-radius:8px; border:none; background:var(--bg); color:var(--ink); display:flex; align-items:center; justify-content:center; cursor:pointer; }
+.reorder-arrow-btn:disabled { opacity:0.25; cursor:not-allowed; }
 .confirm-delete-row { margin-top:10px; background:#FDEEEE; border-radius:14px; padding:12px; text-align:center; font-family:'Prompt'; font-size:13px; color:#B23B3B; }
 .confirm-delete-actions { display:flex; gap:8px; margin-top:10px; }
 .delete-btn-confirm { flex:1; background:#D64545; color:white; border:none; border-radius:999px; padding:10px; font-family:'Prompt'; font-weight:600; font-size:13.5px; cursor:pointer; }
