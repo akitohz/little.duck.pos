@@ -238,6 +238,9 @@ export default function BakeryPOS() {
     return [...catToppings, ...ownToppings];
   };
 
+  const getCartQty = (productId) =>
+    cart.reduce((s, i) => (i.id === productId || i.id.startsWith(productId + "__") ? s + i.qty : s), 0);
+
   const addToCart = (p) => {
     setCart((prev) => {
       const ex = prev.find((i) => i.id === p.id);
@@ -467,21 +470,25 @@ export default function BakeryPOS() {
             </div>
             <div className="product-grid">
               {visibleProducts.length === 0 && <div className="empty-note">ยังไม่มีสินค้าในหมวดนี้</div>}
-              {visibleProducts.map((p, idx) => (
-                <div
-                  className="price-tag-card"
-                  key={p.id}
-                  onClick={() => selectProduct(p)}
-                  role="button"
-                  tabIndex={0}
-                >
-                  <div className="tag-media" style={{ background: PALETTE[idx % PALETTE.length] }}>
-                    {p.image ? <img src={p.image} alt={p.name} /> : <span className="tag-icon">{p.icon || "🍰"}</span>}
+              {visibleProducts.map((p, idx) => {
+                const qtyInCart = getCartQty(p.id);
+                return (
+                  <div
+                    className="price-tag-card"
+                    key={p.id}
+                    onClick={() => selectProduct(p)}
+                    role="button"
+                    tabIndex={0}
+                  >
+                    {qtyInCart > 0 && <span className="tag-qty-badge">{qtyInCart}</span>}
+                    <div className="tag-media" style={{ background: PALETTE[idx % PALETTE.length] }}>
+                      {p.image ? <img src={p.image} alt={p.name} /> : <span className="tag-icon">{p.icon || "🍰"}</span>}
+                    </div>
+                    <div className="tag-name">{p.name}</div>
+                    <div className="tag-price">฿{fmt(p.price)}</div>
                   </div>
-                  <div className="tag-name">{p.name}</div>
-                  <div className="tag-price">฿{fmt(p.price)}</div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </section>
 
@@ -1380,6 +1387,7 @@ const css = `
 
 .product-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(148px, 1fr)); gap:16px 14px; }
 .price-tag-card { position:relative; background:var(--card); border:none; border-radius:22px; padding:14px 14px 16px; text-align:left; cursor:pointer; transition:transform .15s, box-shadow .15s; box-shadow: var(--shadow); }
+.tag-qty-badge { position:absolute; top:-8px; right:-8px; min-width:26px; height:26px; padding:0 6px; border-radius:999px; background:#5B5F6E; color:white; font-family:'Prompt'; font-weight:700; font-size:13px; display:flex; align-items:center; justify-content:center; box-shadow:0 3px 8px rgba(43,45,66,0.25); z-index:3; }
 .price-tag-card:hover { transform:translateY(-3px); box-shadow: 0 14px 30px rgba(43,45,66,0.12); }
 .tag-media { width:100%; aspect-ratio:1; border-radius:16px; margin-bottom:10px; display:flex; align-items:center; justify-content:center; overflow:hidden; }
 .tag-media img { width:100%; height:100%; object-fit:cover; }
