@@ -276,6 +276,10 @@ export default function BakeryPOS() {
     setShowToppingPicker(null);
   };
   const changeQty = (id, d) => setCart((prev) => prev.map((i) => (i.id === id ? { ...i, qty: i.qty + d } : i)).filter((i) => i.qty > 0));
+  const setQtyDirect = (id, value) => {
+    const n = Math.max(0, Math.floor(Number(value) || 0));
+    setCart((prev) => (n === 0 ? prev.filter((i) => i.id !== id) : prev.map((i) => (i.id === id ? { ...i, qty: n } : i))));
+  };
   const removeItem = (id) => setCart((prev) => prev.filter((i) => i.id !== id));
 
   const subtotal = cart.reduce((s, i) => s + i.price * i.qty, 0);
@@ -510,7 +514,15 @@ export default function BakeryPOS() {
                     {i.note && <div className="ri-note">📝 {i.note}</div>}
                     <div className="ri-controls">
                       <button className="qty-btn" onClick={() => changeQty(i.id, -1)}><Minus size={12} /></button>
-                      <span className="qty-val">{i.qty}</span>
+                      <input
+                        className="qty-input"
+                        type="number"
+                        min="0"
+                        inputMode="numeric"
+                        value={i.qty}
+                        onChange={(e) => setQtyDirect(i.id, e.target.value)}
+                        onFocus={(e) => e.target.select()}
+                      />
                       <button className="qty-btn" onClick={() => changeQty(i.id, 1)}><Plus size={12} /></button>
                       <span className="ri-price">฿{fmt(i.price * i.qty)}</span>
                       <button className="rm-btn" onClick={() => removeItem(i.id)}><Trash2 size={13} /></button>
@@ -1414,6 +1426,11 @@ const css = `
 .ri-controls { display:flex; align-items:center; gap:8px; }
 .qty-btn { width:22px; height:22px; border-radius:50%; border:none; background:var(--surface); color:var(--ink); display:flex; align-items:center; justify-content:center; cursor:pointer; }
 .qty-val { font-variant-numeric:tabular-nums; min-width:16px; text-align:center; font-size:13px; font-weight:600; }
+.qty-input {
+  width:34px; text-align:center; font-variant-numeric:tabular-nums; font-size:13px; font-weight:600;
+  font-family:'Prompt'; border:1px solid var(--line); border-radius:8px; padding:4px 2px; background:var(--card); color:var(--ink);
+}
+.qty-input::-webkit-inner-spin-button, .qty-input::-webkit-outer-spin-button { -webkit-appearance:none; margin:0; }
 .ri-price { margin-left:auto; font-variant-numeric:tabular-nums; font-weight:700; font-size:13px; }
 .rm-btn { background:none; border:none; color:var(--peach-deep); opacity:0.55; cursor:pointer; }
 .rm-btn:hover { opacity:1; }
