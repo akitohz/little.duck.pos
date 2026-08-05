@@ -280,6 +280,7 @@ export default function BakeryPOS() {
     const n = Math.max(0, Math.floor(Number(value) || 0));
     setCart((prev) => (n === 0 ? prev.filter((i) => i.id !== id) : prev.map((i) => (i.id === id ? { ...i, qty: n } : i))));
   };
+  const setItemNote = (id, note) => setCart((prev) => prev.map((i) => (i.id === id ? { ...i, note } : i)));
   const removeItem = (id) => setCart((prev) => prev.filter((i) => i.id !== id));
 
   const subtotal = cart.reduce((s, i) => s + i.price * i.qty, 0);
@@ -388,6 +389,9 @@ export default function BakeryPOS() {
     }
   }, [posTabs.join("|")]);
 
+  const [summaryMode, setSummaryMode] = useState("day");
+  const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7));
+
   const dayOrders = orders.filter((o) => o.time.slice(0, 10) === selectedDate);
   const paidDayOrders = dayOrders.filter((o) => o.paymentMethod !== "pending");
   const pendingDayOrders = dayOrders.filter((o) => o.paymentMethod === "pending");
@@ -398,6 +402,18 @@ export default function BakeryPOS() {
   const productTally = {};
   paidDayOrders.forEach((o) => o.items.forEach((i) => { productTally[i.name] = (productTally[i.name] || 0) + i.qty; }));
   const topProducts = Object.entries(productTally).sort((a, b) => b[1] - a[1]).slice(0, 5);
+
+  const monthOrders = orders.filter((o) => o.time.slice(0, 7) === selectedMonth);
+  const paidMonthOrders = monthOrders.filter((o) => o.paymentMethod !== "pending");
+  const pendingMonthOrders = monthOrders.filter((o) => o.paymentMethod === "pending");
+  const monthSales = paidMonthOrders.reduce((s, o) => s + o.total, 0);
+  const avgMonthOrder = paidMonthOrders.length ? monthSales / paidMonthOrders.length : 0;
+  const cashMonthTotal = paidMonthOrders.filter((o) => o.paymentMethod === "cash").reduce((s, o) => s + o.total, 0);
+  const transferMonthTotal = paidMonthOrders.filter((o) => o.paymentMethod === "transfer").reduce((s, o) => s + o.total, 0);
+  const monthProductTally = {};
+  paidMonthOrders.forEach((o) => o.items.forEach((i) => { monthProductTally[i.name] = (monthProductTally[i.name] || 0) + i.qty; }));
+  const monthTopProducts = Object.entries(monthProductTally).sort((a, b) => b[1] - a[1]);
+  const monthDaysWithSales = new Set(paidMonthOrders.map((o) => o.time.slice(0, 10))).size;
 
   if (!loaded) return <div className="loading-screen"><style>{css}</style>กำลังโหลด...</div>;
 
@@ -511,7 +527,13 @@ export default function BakeryPOS() {
                       <span className="ri-thumb">{i.image ? <img src={i.image} alt="" /> : <span>{i.icon || "🍰"}</span>}</span>
                       <span className="ri-name">{i.name}</span>
                     </div>
-                    {i.note && <div className="ri-note">📝 {i.note}</div>}
+                    <input
+                      className="ri-note-input"
+                      type="text"
+                      value={i.note || ""}
+                      onChange={(e) => setItemNote(i.id, e.target.value)}
+                      placeholder="เพิ่มหมายเหตุ เช่น รสคุกกี้..."
+                    />
                     <div className="ri-controls">
                       <button className="qty-btn" onClick={() => changeQty(i.id, -1)}><Minus size={12} /></button>
                       <input
@@ -545,74 +567,136 @@ export default function BakeryPOS() {
         </div>
       ) : (
         <div className="history-layout">
-          <div className="date-picker-row">
-            <Calendar size={16} />
-            <input type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} className="date-input" />
+          <div className="summary-mode-toggle">
+            <button className={`mode-tab ${summaryMode === "day" ? "active" : ""}`} onClick={() => setSummaryMode("day")}>รายวัน</button>
+            <button className={`mode-tab ${summaryMode === "month" ? "active" : ""}`} onClick={() => setSummaryMode("month")}>รายเดือน</button>
           </div>
 
-          <div className="history-summary">
-            <div className="summary-card tint-blue">
-              <div className="summary-label">ยอดขาย</div>
-              <div className="summary-value">฿{fmt(daySales)}</div>
-            </div>
-            <div className="summary-card tint-green">
-              <div className="summary-label">จำนวนออเดอร์</div>
-              <div className="summary-value">{paidDayOrders.length}</div>
-            </div>
-            <div className="summary-card tint-yellow">
-              <div className="summary-label">เฉลี่ยต่อบิล</div>
-              <div className="summary-value">฿{fmt(avgOrder)}</div>
-            </div>
-          </div>
+          {summaryMode === "day" ? (
+            <>
+              <div className="date-picker-row">
+                <Calendar size={16} />
+                <input type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} className="date-input" />
+              </div>
 
-          <div className="history-summary">
-            <div className="summary-card small">
-              <div className="summary-label"><Banknote size={13} /> เงินสด</div>
-              <div className="summary-value small-val">฿{fmt(cashTotal)}</div>
-            </div>
-            <div className="summary-card small">
-              <div className="summary-label"><ArrowLeftRight size={13} /> โอนเงิน</div>
-              <div className="summary-value small-val">฿{fmt(transferTotal)}</div>
-            </div>
-            <div className="summary-card small">
-              <div className="summary-label"><Clock size={13} /> รอจ่าย</div>
-              <div className="summary-value small-val">{pendingDayOrders.length} รายการ</div>
-            </div>
-          </div>
-
-          {topProducts.length > 0 && (
-            <div className="top-products">
-              <div className="top-title"><TrendingUp size={14} /> ขายดีวันนี้</div>
-              {topProducts.map(([name, qty]) => (
-                <div className="top-row" key={name}><span>{name}</span><span>{qty} ชิ้น</span></div>
-              ))}
-            </div>
-          )}
-
-          {pendingDayOrders.length > 0 && (
-            <div className="top-products pending-card">
-              <div className="top-title"><Clock size={14} /> รายการจอง / รอจ่าย</div>
-              {pendingDayOrders.map((o) => (
-                <button className="pending-row" key={o.id} onClick={() => setHistoryDetail(o)}>
-                  <span>📞 {o.customerPhone || "-"}</span>
-                  <span>฿{fmt(o.total)}</span>
-                </button>
-              ))}
-            </div>
-          )}
-
-          <div className="history-list">
-            {dayOrders.length === 0 && <div className="empty-note">ไม่มีออเดอร์ในวันนี้</div>}
-            {dayOrders.map((o) => (
-              <button className="history-row" key={o.id} onClick={() => setHistoryDetail(o)}>
-                <div className="hr-left">
-                  <div className="hr-time">{new Date(o.time).toLocaleTimeString("th-TH", { timeStyle: "short" })}</div>
-                  <div className="hr-items">{o.items.length} รายการ · {paymentLabel(o.paymentMethod)}</div>
+              <div className="history-summary">
+                <div className="summary-card tint-blue">
+                  <div className="summary-label">ยอดขาย</div>
+                  <div className="summary-value">฿{fmt(daySales)}</div>
                 </div>
-                <div className="hr-total">฿{fmt(o.total)}</div>
-              </button>
-            ))}
-          </div>
+                <div className="summary-card tint-green">
+                  <div className="summary-label">จำนวนออเดอร์</div>
+                  <div className="summary-value">{paidDayOrders.length}</div>
+                </div>
+                <div className="summary-card tint-yellow">
+                  <div className="summary-label">เฉลี่ยต่อบิล</div>
+                  <div className="summary-value">฿{fmt(avgOrder)}</div>
+                </div>
+              </div>
+
+              <div className="history-summary">
+                <div className="summary-card small">
+                  <div className="summary-label"><Banknote size={13} /> เงินสด</div>
+                  <div className="summary-value small-val">฿{fmt(cashTotal)}</div>
+                </div>
+                <div className="summary-card small">
+                  <div className="summary-label"><ArrowLeftRight size={13} /> โอนเงิน</div>
+                  <div className="summary-value small-val">฿{fmt(transferTotal)}</div>
+                </div>
+                <div className="summary-card small">
+                  <div className="summary-label"><Clock size={13} /> รอจ่าย</div>
+                  <div className="summary-value small-val">{pendingDayOrders.length} รายการ</div>
+                </div>
+              </div>
+
+              {topProducts.length > 0 && (
+                <div className="top-products">
+                  <div className="top-title"><TrendingUp size={14} /> ขายดีวันนี้</div>
+                  {topProducts.map(([name, qty]) => (
+                    <div className="top-row" key={name}><span>{name}</span><span>{qty} ชิ้น</span></div>
+                  ))}
+                </div>
+              )}
+
+              {pendingDayOrders.length > 0 && (
+                <div className="top-products pending-card">
+                  <div className="top-title"><Clock size={14} /> รายการจอง / รอจ่าย</div>
+                  {pendingDayOrders.map((o) => (
+                    <button className="pending-row" key={o.id} onClick={() => setHistoryDetail(o)}>
+                      <span>📞 {o.customerPhone || "-"}</span>
+                      <span>฿{fmt(o.total)}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <div className="history-list">
+                {dayOrders.length === 0 && <div className="empty-note">ไม่มีออเดอร์ในวันนี้</div>}
+                {dayOrders.map((o) => (
+                  <button className="history-row" key={o.id} onClick={() => setHistoryDetail(o)}>
+                    <div className="hr-left">
+                      <div className="hr-time">{new Date(o.time).toLocaleTimeString("th-TH", { timeStyle: "short" })}</div>
+                      <div className="hr-items">{o.items.length} รายการ · {paymentLabel(o.paymentMethod)}</div>
+                    </div>
+                    <div className="hr-total">฿{fmt(o.total)}</div>
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="date-picker-row">
+                <Calendar size={16} />
+                <input type="month" value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)} className="date-input" />
+              </div>
+
+              <div className="history-summary">
+                <div className="summary-card tint-blue">
+                  <div className="summary-label">ยอดขายรวมทั้งเดือน</div>
+                  <div className="summary-value">฿{fmt(monthSales)}</div>
+                </div>
+                <div className="summary-card tint-green">
+                  <div className="summary-label">จำนวนออเดอร์</div>
+                  <div className="summary-value">{paidMonthOrders.length}</div>
+                </div>
+                <div className="summary-card tint-yellow">
+                  <div className="summary-label">เฉลี่ยต่อบิล</div>
+                  <div className="summary-value">฿{fmt(avgMonthOrder)}</div>
+                </div>
+              </div>
+
+              <div className="history-summary">
+                <div className="summary-card small">
+                  <div className="summary-label"><Banknote size={13} /> เงินสด</div>
+                  <div className="summary-value small-val">฿{fmt(cashMonthTotal)}</div>
+                </div>
+                <div className="summary-card small">
+                  <div className="summary-label"><ArrowLeftRight size={13} /> โอนเงิน</div>
+                  <div className="summary-value small-val">฿{fmt(transferMonthTotal)}</div>
+                </div>
+                <div className="summary-card small">
+                  <div className="summary-label"><Clock size={13} /> รอจ่าย</div>
+                  <div className="summary-value small-val">{pendingMonthOrders.length} รายการ</div>
+                </div>
+              </div>
+
+              <div className="summary-card small full-width">
+                <div className="summary-label">เฉลี่ยต่อวัน (จากวันที่มีขาย {monthDaysWithSales} วัน)</div>
+                <div className="summary-value small-val">฿{fmt(monthDaysWithSales ? monthSales / monthDaysWithSales : 0)}</div>
+              </div>
+
+              {monthTopProducts.length > 0 && (
+                <div className="top-products">
+                  <div className="top-title"><TrendingUp size={14} /> รายการสินค้าที่ขายทั้งเดือน</div>
+                  {monthTopProducts.map(([name, qty]) => (
+                    <div className="top-row" key={name}><span>{name}</span><span>{qty} ชิ้น</span></div>
+                  ))}
+                </div>
+              )}
+
+              {monthOrders.length === 0 && <div className="empty-note">ไม่มีออเดอร์ในเดือนนี้</div>}
+            </>
+          )}
         </div>
       )}
 
@@ -1416,13 +1500,20 @@ const css = `
 .receipt-title { font-family:'Prompt'; font-weight:700; font-size:16px; }
 .receipt-time { font-size:11px; color:var(--ink-soft); }
 .receipt-divider { border-top:1.5px solid var(--line); margin:12px 0; }
-.receipt-items { max-height:260px; overflow-y:auto; min-height:40px; }
+.receipt-items { min-height:40px; }
 .receipt-item { display:flex; flex-direction:column; gap:6px; padding:8px 0; }
 .ri-main { display:flex; align-items:center; gap:10px; font-size:13.5px; }
 .ri-thumb { width:34px; height:34px; border-radius:11px; overflow:hidden; display:flex; align-items:center; justify-content:center; background:var(--surface); flex-shrink:0; }
 .ri-thumb img { width:100%; height:100%; object-fit:cover; }
 .ri-name { font-weight:500; }
 .ri-note { font-size:11.5px; color:var(--ink-soft); font-style:italic; margin-left:44px; margin-top:-2px; }
+.ri-note-input {
+  margin-left:44px; margin-top:-2px; margin-bottom:2px; width:calc(100% - 44px);
+  border:none; border-bottom:1px dashed var(--line); background:none; font-family:'Prompt'; font-size:12px;
+  color:var(--ink); padding:3px 2px;
+}
+.ri-note-input:focus { border-bottom-color: var(--yellow-deep); outline:none; }
+.ri-note-input::placeholder { color:var(--ink-soft); font-style:italic; }
 .ri-controls { display:flex; align-items:center; gap:8px; }
 .qty-btn { width:22px; height:22px; border-radius:50%; border:none; background:var(--surface); color:var(--ink); display:flex; align-items:center; justify-content:center; cursor:pointer; }
 .qty-val { font-variant-numeric:tabular-nums; min-width:16px; text-align:center; font-size:13px; font-weight:600; }
@@ -1443,6 +1534,10 @@ const css = `
 .pay-btn:not(:disabled):hover { background:var(--peach-deep); }
 
 .history-layout { padding:20px; padding-bottom:8px; max-width:640px; margin:0 auto; width:100%; }
+.summary-mode-toggle { display:flex; gap:8px; margin-bottom:16px; background:var(--card); border-radius:999px; padding:5px; box-shadow: var(--shadow); }
+.mode-tab { flex:1; border:none; background:none; padding:9px; border-radius:999px; font-family:'Prompt'; font-weight:500; font-size:13.5px; color:var(--ink-soft); cursor:pointer; }
+.mode-tab.active { background:var(--yellow-deep); color:var(--ink); font-weight:600; }
+.summary-card.full-width { width:100%; margin-bottom:14px; }
 .date-picker-row { display:flex; align-items:center; gap:8px; margin-bottom:16px; color:var(--ink-soft); }
 .date-input { border:none; border-radius:10px; padding:8px 12px; font-family:'Prompt'; background:var(--card); box-shadow: var(--shadow); }
 .history-summary { display:flex; gap:14px; margin-bottom:14px; }
